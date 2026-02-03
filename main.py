@@ -93,7 +93,7 @@ def main(args):
 
     # Create policy
     if args.teleop:
-        policy = TeleopPolicy()
+        policy = TeleopPolicy(use_ssl=args.ssl)
     else:
         policy = RemotePolicy()
 
@@ -109,5 +109,6 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
+    parser.add_argument('--ssl', action='store_true', help='Use HTTPS instead of HTTP (required for WebXR on some devices)')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

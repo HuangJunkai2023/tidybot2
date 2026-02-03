@@ -3,3 +3,9 @@ __pycache__
 .ipynb_checkpoints
 *.un~
 *.swp
+# SSL certificates
+cert.pem
+key.pem
+
+# VS Code
+.vscode/

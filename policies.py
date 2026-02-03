@@ -43,7 +43,7 @@ class WebServer:
         # Reduce verbose Flask log output
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
-    def run(self):
+    def run(self, use_ssl=False):
         # Get IP address
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0)
@@ -54,16 +54,30 @@ class WebServer:
             address = '127.0.0.1'
         finally:
             s.close()
-        print(f'Starting server at {address}:5000')
-        self.socketio.run(self.app, host='0.0.0.0')
+        
+        protocol = 'https' if use_ssl else 'http'
+        print(f'Starting server at {protocol}://{address}:5000')
+        
+        if use_ssl:
+            import os
+            cert_file = 'cert.pem'
+            key_file = 'key.pem'
+            if os.path.exists(cert_file) and os.path.exists(key_file):
+                self.socketio.run(self.app, host='0.0.0.0', ssl_context=(cert_file, key_file))
+            else:
+                print(f'Warning: SSL certificates not found. Run this command to generate them:')
+                print(f'openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365')
+                self.socketio.run(self.app, host='0.0.0.0')
+        else:
+            self.socketio.run(self.app, host='0.0.0.0')
 
 DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
 
 # Convert coordinate system from WebXR to robot
 def convert_webxr_pose(pos, quat):
     # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
-    pos = np.array([-pos['z'], -pos['x'], pos['y']], dtype=np.float64)
-    rot = R.from_quat([-quat['z'], -quat['x'], quat['y'], quat['w']])
+    pos = np.array([-pos['y'], pos['x'], -pos['z']], dtype=np.float64)
+    rot = R.from_quat([-quat['y'], quat['x'], -quat['z'], quat['w']])
 
     # Apply offset so that rotations are around device center instead of device camera
     pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
@@ -212,7 +226,7 @@ class TeleopController:
 
 # Teleop using WebXR phone web app
 class TeleopPolicy(Policy):
-    def __init__(self):
+    def __init__(self, use_ssl=False):
         self.web_server_queue = Queue()
         self.teleop_controller = None
         self.teleop_state = None  # States: episode_started -> episode_ended -> reset_env
@@ -220,7 +234,7 @@ class TeleopPolicy(Policy):
 
         # Web server for serving the WebXR phone web app
         server = WebServer(self.web_server_queue)
-        threading.Thread(target=server.run, daemon=True).start()
+        threading.Thread(target=lambda: server.run(use_ssl=use_ssl), daemon=True).start()
 
         # Listener thread to process messages from WebXR client
         threading.Thread(target=self.listener_loop, daemon=True).start()
