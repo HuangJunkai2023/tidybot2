@@ -60,14 +60,16 @@ class WebServer:
         
         if use_ssl:
             import os
-            cert_file = 'cert.pem'
-            key_file = 'key.pem'
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            cert_file = os.path.join(script_dir, 'cert.pem')
+            key_file = os.path.join(script_dir, 'key.pem')
             if os.path.exists(cert_file) and os.path.exists(key_file):
                 self.socketio.run(self.app, host='0.0.0.0', ssl_context=(cert_file, key_file))
             else:
                 print(f'Warning: SSL certificates not found. Run this command to generate them:')
                 print(f'openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365')
-                self.socketio.run(self.app, host='0.0.0.0')
+                print(f'Error: Cannot start HTTPS server without certificates.')
+                return
         else:
             self.socketio.run(self.app, host='0.0.0.0')
 
