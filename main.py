@@ -95,7 +95,7 @@ def main(args):
     if args.teleop:
         policy = TeleopPolicy(use_ssl=args.ssl)
     else:
-        policy = RemotePolicy()
+        policy = RemotePolicy(use_ssl=args.ssl)
 
     try:
         while True:

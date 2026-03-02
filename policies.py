@@ -285,8 +285,8 @@ class TeleopPolicy(Policy):
 
 # Execute policy running on remote server
 class RemotePolicy(TeleopPolicy):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, use_ssl=False):
+        super().__init__(use_ssl=use_ssl)
 
         # Use phone as enabling device during policy rollout
         self.enabled = False
@@ -311,8 +311,8 @@ class RemotePolicy(TeleopPolicy):
             raise Exception('Could not communicate with policy server') from e
         self.socket.setsockopt(zmq.RCVTIMEO, default_timeout)  # Put default timeout back
 
-        # Disable policy execution until user presses on screen
-        self.enabled = False  # Note: Set to True to run without phone
+        # Enable policy execution immediately
+        self.enabled = True
 
     def _step(self, obs):
         # Return teleop command if episode has ended
@@ -350,9 +350,6 @@ class RemotePolicy(TeleopPolicy):
         if self.episode_ended:
             # Run teleop controller if episode has ended
             self.teleop_controller.process_message(data)
-        else:
-            # Enable policy execution if user is pressing on screen
-            self.enabled = 'teleop_mode' in data
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)
