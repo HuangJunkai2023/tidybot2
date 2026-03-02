@@ -14,16 +14,6 @@
           Segoe UI, Roboto, Oxygen,
           Ubuntu, Cantarell, Fira Sans,
           Droid Sans, Helvetica Neue, sans-serif;
-        -webkit-user-select: none;
-        user-select: none;
-        -webkit-touch-callout: none;
-        -webkit-tap-highlight-color: transparent;
-      }
-
-      #overlay, #overlay * {
-        -webkit-user-select: none;
-        user-select: none;
-        -webkit-touch-callout: none;
       }
 
       header {
@@ -99,13 +89,6 @@
       // WebGL scene globals
       let gl = null;
 
-      // Touch event handling globals
-      let touchId, touchStartY, touchDeltaY, teleopMode;
-
-      document.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-      });
-
       function initXR() {
         xrButton = new WebXRButton({
           onRequestSession,
@@ -142,53 +125,8 @@
         gl = canvas.getContext('webgl', {
           xrCompatible: true,
         });
-        
-        // 先设置 baseLayer，这会设置 canvas 的实际尺寸
-        session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-        
-        // 确保 canvas 覆盖全屏
-        gl.canvas.style.cssText = 'position:absolute;z-index:1;width:100%;height:100%;left:0;top:0;touch-action:none;';
-        document.body.appendChild(gl.canvas);
-        
-        // 在 canvas 上添加触摸事件监听
         addCanvasListeners(gl.canvas);
-        
-        // 重要：在 AR 模式下，在 document 上也监听触摸事件
-        // 因为 dom-overlay 模式下可能需要在更高层级捕获
-        document.addEventListener('touchstart', (event) => {
-          if (touchId === undefined && event.touches.length > 0) {
-            const touch = event.touches[0];
-            touchId = touch.identifier;
-            touchStartY = touch.clientY;
-            teleopMode = touch.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
-            touchDeltaY = 0;
-            event.preventDefault();
-          }
-        }, { capture: true, passive: false });
-        
-        document.addEventListener('touchmove', (event) => {
-          if (touchId !== undefined) {
-            for (const touch of event.touches) {
-              if (touchId === touch.identifier) {
-                touchDeltaY = (touchStartY - touch.clientY) / (0.2 * window.innerHeight);
-                touchDeltaY = Math.min(1, Math.max(-1, touchDeltaY));
-                event.preventDefault();
-                break;
-              }
-            }
-          }
-        }, { capture: true, passive: false });
-        
-        document.addEventListener('touchend', (event) => {
-          for (const touch of event.changedTouches) {
-            if (touchId === touch.identifier) {
-              touchId = undefined;
-              event.preventDefault();
-              break;
-            }
-          }
-        }, { capture: true, passive: false });
-        
+        session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         session.requestReferenceSpace('local').then((refSpace) => {
           xrRefSpace = refSpace;
           session.requestAnimationFrame(onXRFrame);
@@ -219,6 +157,7 @@
       }
 
       // Touch event handling
+      let touchId; let touchStartY; let touchDeltaY; let teleopMode;
       function addCanvasListeners(canvas) {
         function handleTouch(touch) {
           touchDeltaY = (touchStartY - touch.clientY) / (0.2 * window.innerHeight);
@@ -232,29 +171,26 @@
             touchStartY = touch.clientY;
             teleopMode = touch.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
             handleTouch(touch);
-            event.preventDefault();
           }
-        }, { passive: false });
+        });
 
         canvas.addEventListener('touchmove', (event) => {
           for (const touch of event.changedTouches) {
             if (touchId === touch.identifier) {
               handleTouch(touch);
-              event.preventDefault();
             }
           }
-        }, { passive: false });
+        });
 
         function updateTouchIds(event) {
           for (const touch of event.changedTouches) {
             if (touchId === touch.identifier) {
               touchId = undefined;
-              event.preventDefault();
             }
           }
         }
-        canvas.addEventListener('touchend', updateTouchIds, { passive: false });
-        canvas.addEventListener('touchcancel', updateTouchIds, { passive: false });
+        canvas.addEventListener('touchend', updateTouchIds);
+        canvas.addEventListener('touchcancel', updateTouchIds);
       }
 
       function onXRFrame(t, frame) {
