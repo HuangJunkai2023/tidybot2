@@ -37,6 +37,9 @@ class WebServer:
             # Send the timestamp back for RTT calculation (expected RTT on 5 GHz Wi-Fi is 7 ms)
             emit('echo', data['timestamp'])
 
+            # Stamp with server time so staleness check is clock-independent
+            data['server_recv_time'] = time.time()
+
             # Add data to queue for processing
             self.queue.put(data)
 
@@ -267,16 +270,21 @@ class TeleopPolicy(Policy):
 
     def listener_loop(self):
         while True:
-            if not self.web_server_queue.empty():
-                data = self.web_server_queue.get()
+            # Drain the queue: process all state updates, keep only the latest teleop message
+            latest_data = None
+            while not self.web_server_queue.empty():
+                item = self.web_server_queue.get()
+                # State updates must always be processed immediately
+                if 'state_update' in item:
+                    self.teleop_state = item['state_update']
+                else:
+                    latest_data = item  # Keep overwriting so we only process the newest
 
-                # Update state
-                if 'state_update' in data:
-                    self.teleop_state = data['state_update']
-
-                # Process message if not stale
-                elif 1000 * time.time() - data['timestamp'] < 250:  # 250 ms
-                    self._process_message(data)
+            if latest_data is not None:
+                # Use server-side receive time to avoid phone/server clock skew
+                age_ms = 1000 * (time.time() - latest_data['server_recv_time'])
+                if age_ms < 250:  # 250 ms
+                    self._process_message(latest_data)
 
             time.sleep(0.001)
 
