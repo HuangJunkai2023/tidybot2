@@ -22,9 +22,8 @@ from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_M
 from constants import ER3PRO_ENABLE_GRIPPER
 from constants import ER3PRO_GRIPPER_THRESHOLD, ER3PRO_GRIPPER_BOARD, ER3PRO_GRIPPER_DI1_PORT, ER3PRO_GRIPPER_DI2_PORT
 from constants import ER3PRO_CPP_BRIDGE_BIN
-from constants import ER3PRO_RT_FILTER_FREQ, ER3PRO_RT_NETWORK_TOLERANCE
-from constants import ER3PRO_TARGET_ALPHA_POS, ER3PRO_TARGET_ALPHA_ROT
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
+from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
 
 
 class ER3ProCppBridgeArm:
@@ -40,12 +39,11 @@ class ER3ProCppBridgeArm:
             '--robot-ip', ER3PRO_IP,
             '--speed', str(ER3PRO_MOVE_VELOCITY),
             '--zone', str(ER3PRO_MOVE_ZONE),
-            '--filter-freq', str(ER3PRO_RT_FILTER_FREQ),
-            '--rt-network-tolerance', str(ER3PRO_RT_NETWORK_TOLERANCE),
-            '--target-alpha-pos', str(ER3PRO_TARGET_ALPHA_POS),
-            '--target-alpha-rot', str(ER3PRO_TARGET_ALPHA_ROT),
             '--max-pos-speed', str(ER3PRO_MAX_POS_SPEED),
             '--max-rot-speed', str(ER3PRO_MAX_ROT_SPEED),
+            '--max-pos-accel', str(ER3PRO_MAX_POS_ACCEL),
+            '--max-rot-accel', str(ER3PRO_MAX_ROT_ACCEL),
+            '--cmd-timeout', str(ER3PRO_CMD_TIMEOUT),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
             '--gripper-di1-port', str(ER3PRO_GRIPPER_DI1_PORT),
