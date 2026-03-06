@@ -9,7 +9,7 @@
 # causing latency spikes.
 
 import queue
-import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -20,118 +20,92 @@ from constants import ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
 from constants import ARM_BACKEND
 from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE
 from constants import ER3PRO_GRIPPER_THRESHOLD, ER3PRO_GRIPPER_BOARD, ER3PRO_GRIPPER_DI1_PORT, ER3PRO_GRIPPER_DI2_PORT
+from constants import ER3PRO_CPP_BRIDGE_BIN
 
 
-def import_xcore_sdk():
-    if platform.system() == 'Windows':
-        module_name = 'Release.windows.xCoreSDK_python'
-    elif platform.system() == 'Linux':
-        module_name = 'Release.linux.xCoreSDK_python'
-    else:
-        raise RuntimeError(f'Unsupported OS: {platform.system()}')
-
-    sdk_root = Path(__file__).resolve().parents[1] / 'xcoresdk_python-v0.6.0'
-    example_dir = sdk_root / 'example'
-    release_dir = sdk_root / 'Release'
-    for path in [
-        str(example_dir),
-        str(sdk_root),
-        str(release_dir),
-        str(release_dir / 'linux'),
-        str(release_dir / 'windows'),
-        str(release_dir / 'linux' / 'xCoreSDK_python'),
-        str(release_dir / 'windows' / 'xCoreSDK_python'),
-    ]:
-        if path not in sys.path:
-            sys.path.insert(0, path)
-
-    import importlib
-    return importlib.import_module(module_name)
-
-
-class ER3ProArm:
+class ER3ProCppBridgeArm:
     def __init__(self):
-        self.xcore = import_xcore_sdk()
-        self.ec = {}
-        self.robot = self._create_robot()
-        self.toolset = self.xcore.Toolset()
-        self.gripper = None
         self.gripper_pos = np.array([1.0])
-        self._setup_robot()
-        self._setup_gripper()
 
-    def _create_robot(self):
-        if hasattr(self.xcore, 'xMateErProRobot'):
-            robot = self.xcore.xMateErProRobot()
-            robot.connectToRobot(ER3PRO_IP)
-            return robot
-        if ER3PRO_LOCAL_IP is None:
-            return self.xcore.xMateRobot(ER3PRO_IP)
-        return self.xcore.xMateRobot(ER3PRO_IP, ER3PRO_LOCAL_IP)
+        bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
+        if not bridge_path.exists():
+            raise RuntimeError(f'ER3Pro C++ bridge not found: {bridge_path}')
 
-    def _setup_robot(self):
-        self.robot.setOperateMode(self.xcore.OperateMode.automatic, self.ec)
-        self.robot.setPowerState(True, self.ec)
-        self.robot.setMotionControlMode(self.xcore.MotionControlMode.NrtCommandMode, self.ec)
-        self.robot.clearServoAlarm(self.ec)
+        cmd = [
+            str(bridge_path),
+            '--robot-ip', ER3PRO_IP,
+            '--speed', str(ER3PRO_MOVE_VELOCITY),
+            '--zone', str(ER3PRO_MOVE_ZONE),
+            '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
+            '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
+            '--gripper-di1-port', str(ER3PRO_GRIPPER_DI1_PORT),
+            '--gripper-di2-port', str(ER3PRO_GRIPPER_DI2_PORT),
+        ]
+        if ER3PRO_LOCAL_IP:
+            cmd.extend(['--local-ip', ER3PRO_LOCAL_IP])
 
-    def _setup_gripper(self):
-        try:
-            from jodell.er3_io_ctrl import ER3ProGripperIOController
-            self.gripper = ER3ProGripperIOController(
-                robot=self.robot,
-                board=ER3PRO_GRIPPER_BOARD,
-                di1_do_port=ER3PRO_GRIPPER_DI1_PORT,
-                di2_do_port=ER3PRO_GRIPPER_DI2_PORT,
-            )
-            self.gripper.enable_or_preset1()
-        except Exception:
-            self.gripper = None
+        self.proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        ready = self._read_line(timeout=10.0)
+        if ready != 'READY':
+            err = self.proc.stderr.readline().strip() if self.proc.stderr else ''
+            raise RuntimeError(f'Failed to start ER3Pro C++ bridge: {ready} {err}')
+
+    def _read_line(self, timeout=3.0):
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.proc.poll() is not None:
+                raise RuntimeError('ER3Pro C++ bridge exited unexpectedly')
+            if self.proc.stdout is None:
+                break
+            line = self.proc.stdout.readline()
+            if line:
+                return line.strip()
+        raise RuntimeError('Timeout waiting for ER3Pro C++ bridge response')
+
+    def _request(self, msg, timeout=3.0):
+        if self.proc.stdin is None:
+            raise RuntimeError('ER3Pro C++ bridge stdin not available')
+        self.proc.stdin.write(msg + '\n')
+        self.proc.stdin.flush()
+        rep = self._read_line(timeout=timeout)
+        if rep.startswith('ERR '):
+            raise RuntimeError(f'ER3Pro C++ bridge error: {rep[4:]}')
+        return rep
 
     def reset(self):
-        self.robot.moveReset(self.ec)
-        self.robot.clearServoAlarm(self.ec)
-        if self.gripper is not None:
-            self.gripper.enable_or_preset1()
+        self._request('RESET', timeout=8.0)
         self.gripper_pos[:] = 1.0
 
     def execute_action(self, action):
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
         arm_quat = np.asarray(action['arm_quat'], dtype=np.float64)
         rpy = R.from_quat(arm_quat).as_euler('xyz')
-        cart_pos = self.xcore.CartesianPosition([
-            float(arm_pos[0]), float(arm_pos[1]), float(arm_pos[2]),
-            float(rpy[0]), float(rpy[1]), float(rpy[2]),
-        ])
-
-        self.robot.moveReset(self.ec)
-        cmd = None
-        try:
-            joint_pos = self.robot.model().calcIk(cart_pos, self.toolset, self.ec)
-            if joint_pos is not None and len(joint_pos) >= 6:
-                cmd = self.xcore.MoveAbsJCommand(self.xcore.JointPosition(list(joint_pos)[:6]), ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE)
-        except Exception:
-            cmd = None
-
-        if cmd is None:
-            cmd = self.xcore.MoveJCommand(cart_pos, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE)
-
-        cmd_id = self.xcore.PyString()
-        self.robot.moveAppend([cmd], cmd_id, self.ec)
-        self.robot.moveStart(self.ec)
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         self.gripper_pos[:] = gripper_value
-        if self.gripper is not None:
-            if gripper_value >= ER3PRO_GRIPPER_THRESHOLD:
-                self.gripper.enable_or_preset1()
-            else:
-                self.gripper.preset2()
+        self._request(
+            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} {rpy[0]} {rpy[1]} {rpy[2]} {gripper_value}',
+            timeout=8.0,
+        )
 
     def get_state(self):
-        posture = np.asarray(self.robot.posture(self.xcore.CoordinateType.endInRef, self.ec), dtype=np.float64)
+        rep = self._request('STATE', timeout=3.0)
+        items = rep.split()
+        if len(items) != 8 or items[0] != 'STATE':
+            raise RuntimeError(f'Unexpected ER3Pro C++ bridge STATE response: {rep}')
+
+        posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
         arm_pos = posture[:3]
-        arm_quat = R.from_euler('xyz', posture[3:6]).as_quat()
+        arm_quat = R.from_euler('xyz', posture[3:]).as_quat()
+        self.gripper_pos[:] = float(items[7])
         if arm_quat[3] < 0.0:
             np.negative(arm_quat, out=arm_quat)
         return {
@@ -142,13 +116,15 @@ class ER3ProArm:
 
     def close(self):
         try:
-            self.robot.moveReset(self.ec)
+            self._request('CLOSE', timeout=2.0)
         except Exception:
             pass
-        try:
-            self.robot.disconnectFromRobot(self.ec)
-        except Exception:
-            pass
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
 
 
 class KinovaArm:
@@ -199,7 +175,7 @@ class KinovaArm:
 class Arm:
     def __init__(self):
         if ARM_BACKEND == 'er3pro':
-            self.impl = ER3ProArm()
+            self.impl = ER3ProCppBridgeArm()
         elif ARM_BACKEND == 'kinova':
             self.impl = KinovaArm()
         else:
