@@ -19,6 +19,7 @@ from scipy.spatial.transform import Rotation as R
 from constants import ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
 from constants import ARM_BACKEND
 from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE
+from constants import ER3PRO_ENABLE_GRIPPER
 from constants import ER3PRO_GRIPPER_THRESHOLD, ER3PRO_GRIPPER_BOARD, ER3PRO_GRIPPER_DI1_PORT, ER3PRO_GRIPPER_DI2_PORT
 from constants import ER3PRO_CPP_BRIDGE_BIN
 
@@ -43,6 +44,8 @@ class ER3ProCppBridgeArm:
         ]
         if ER3PRO_LOCAL_IP:
             cmd.extend(['--local-ip', ER3PRO_LOCAL_IP])
+        if not ER3PRO_ENABLE_GRIPPER:
+            cmd.append('--disable-gripper')
 
         self.proc = subprocess.Popen(
             cmd,
