@@ -3,12 +3,9 @@
 
 import threading
 import time
+from pathlib import Path
 import cv2 as cv
 import numpy as np
-from kortex_api.autogen.client_stubs.DeviceManagerClientRpc import DeviceManagerClient
-from kortex_api.autogen.client_stubs.VisionConfigClientRpc import VisionConfigClient
-from kortex_api.autogen.messages import DeviceConfig_pb2, VisionConfig_pb2
-from kinova import DeviceConnection
 from constants import BASE_CAMERA_SERIAL
 
 class Camera:
@@ -34,6 +31,51 @@ class Camera:
 
     def close(self):
         self.cap.release()
+
+class DummyCamera:
+    def __init__(self, frame_width=640, frame_height=480):
+        self.image = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+
+    def get_image(self):
+        return self.image
+
+    def close(self):
+        pass
+
+class UVCCamera(Camera):
+    def __init__(self, device_hint, frame_width=640, frame_height=480, autofocus=False):
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.autofocus = autofocus
+        self.cap = self.get_cap(device_hint)
+        super().__init__()
+
+    def _resolve_device(self, device_hint):
+        hint = str(device_hint).strip()
+        if hint.startswith('/dev/'):
+            return hint
+        if hint.isdigit():
+            return int(hint)
+
+        by_id_dir = Path('/dev/v4l/by-id')
+        if by_id_dir.exists():
+            matches = sorted(by_id_dir.glob(f'*{hint}*'))
+            if matches:
+                return str(matches[0])
+        return hint
+
+    def get_cap(self, device_hint):
+        device = self._resolve_device(device_hint)
+        cap = cv.VideoCapture(device)
+        assert cap.isOpened(), f'Unable to open camera: {device_hint}'
+        cap.set(cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        cap.set(cv.CAP_PROP_FRAME_WIDTH, self.frame_width)
+        cap.set(cv.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv.CAP_PROP_AUTOFOCUS, 1 if self.autofocus else 0)
+        for _ in range(10):
+            cap.read()
+        return cap
 
 class LogitechCamera(Camera):
     def __init__(self, serial, frame_width=640, frame_height=360, focus=0):
@@ -110,6 +152,11 @@ class KinovaCamera(Camera):
         # Note: This function adds significant camera latency when it is called
         # directly in __init__, so we call it in a separate thread instead
 
+        from kortex_api.autogen.client_stubs.DeviceManagerClientRpc import DeviceManagerClient
+        from kortex_api.autogen.client_stubs.VisionConfigClientRpc import VisionConfigClient
+        from kortex_api.autogen.messages import DeviceConfig_pb2, VisionConfig_pb2
+        from kinova import DeviceConnection
+
         # Use Kortex API to set camera settings
         with DeviceConnection.createTcpConnection() as router:
             device_manager = DeviceManagerClient(router)
@@ -150,7 +197,7 @@ class KinovaCamera(Camera):
             vision_config.DoSensorFocusAction(sensor_focus_action, vision_device_id)
 
 if __name__ == '__main__':
-    base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
+    base_camera = DummyCamera() if BASE_CAMERA_SERIAL == 'TODO' else LogitechCamera(BASE_CAMERA_SERIAL)
     wrist_camera = KinovaCamera()
     try:
         while True:

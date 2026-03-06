@@ -1,61 +1,83 @@
 # Author: Jimmy Wu
 # Date: October 2024
 
-from cameras import KinovaCamera, LogitechCamera
+import numpy as np
+from cameras import KinovaCamera, LogitechCamera, UVCCamera, DummyCamera
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
-from constants import BASE_CAMERA_SERIAL
+from constants import BASE_CAMERA_SERIAL, WRIST_CAMERA_DEVICE, USE_KINOVA_WRIST_CAMERA
+from constants import ENABLE_BASE, ENABLE_ARM
 from arm_server import ArmManager
 from base_server import BaseManager
 
 class RealEnv:
     def __init__(self):
-        # RPC server connection for base
-        base_manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTHKEY)
-        try:
-            base_manager.connect()
-        except ConnectionRefusedError as e:
-            raise Exception('Could not connect to base RPC server, is base_server.py running?') from e
+        self.base = None
+        self.arm = None
 
-        # RPC server connection for arm
-        arm_manager = ArmManager(address=(ARM_RPC_HOST, ARM_RPC_PORT), authkey=RPC_AUTHKEY)
-        try:
-            arm_manager.connect()
-        except ConnectionRefusedError as e:
-            raise Exception('Could not connect to arm RPC server, is arm_server.py running?') from e
+        if ENABLE_BASE:
+            base_manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTHKEY)
+            try:
+                base_manager.connect()
+            except ConnectionRefusedError as e:
+                raise Exception('Could not connect to base RPC server, is base_server.py running?') from e
+            self.base = base_manager.Base(max_vel=(0.5, 0.5, 1.57), max_accel=(0.5, 0.5, 1.57))
 
-        # RPC proxy objects
-        self.base = base_manager.Base(max_vel=(0.5, 0.5, 1.57), max_accel=(0.5, 0.5, 1.57))
-        self.arm = arm_manager.Arm()
+        if ENABLE_ARM:
+            arm_manager = ArmManager(address=(ARM_RPC_HOST, ARM_RPC_PORT), authkey=RPC_AUTHKEY)
+            try:
+                arm_manager.connect()
+            except ConnectionRefusedError as e:
+                raise Exception('Could not connect to arm RPC server, is arm_server.py running?') from e
+            self.arm = arm_manager.Arm()
+
+        if not ENABLE_BASE and not ENABLE_ARM:
+            raise Exception('At least one subsystem must be enabled')
 
         # Cameras
-        self.base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
-        self.wrist_camera = KinovaCamera()
+        self.base_camera = DummyCamera(frame_width=640, frame_height=360) if BASE_CAMERA_SERIAL == 'TODO' else LogitechCamera(BASE_CAMERA_SERIAL)
+        self.wrist_camera = KinovaCamera() if USE_KINOVA_WRIST_CAMERA else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=640, frame_height=480)
 
     def get_obs(self):
         obs = {}
-        obs.update(self.base.get_state())
-        obs.update(self.arm.get_state())
+        if self.base is not None:
+            obs.update(self.base.get_state())
+        else:
+            obs['base_pose'] = np.zeros(3)
+
+        if self.arm is not None:
+            obs.update(self.arm.get_state())
+        else:
+            obs['arm_pos'] = np.zeros(3)
+            obs['arm_quat'] = np.array([0.0, 0.0, 0.0, 1.0])
+            obs['gripper_pos'] = np.array([1.0])
+
         obs['base_image'] = self.base_camera.get_image()
         obs['wrist_image'] = self.wrist_camera.get_image()
         return obs
 
     def reset(self):
-        print('Resetting base...')
-        self.base.reset()
+        if self.base is not None:
+            print('Resetting base...')
+            self.base.reset()
 
-        print('Resetting arm...')
-        self.arm.reset()
+        if self.arm is not None:
+            print('Resetting arm...')
+            self.arm.reset()
 
         print('Robot has been reset')
 
     def step(self, action):
         # Note: We intentionally do not return obs here to prevent the policy from using outdated data
-        self.base.execute_action(action)  # Non-blocking
-        self.arm.execute_action(action)   # Non-blocking
+        if self.base is not None:
+            self.base.execute_action(action)  # Non-blocking
+        if self.arm is not None:
+            self.arm.execute_action(action)   # Non-blocking
 
     def close(self):
-        self.base.close()
-        self.arm.close()
+        if self.base is not None:
+            self.base.close()
+        if self.arm is not None:
+            self.arm.close()
         self.base_camera.close()
         self.wrist_camera.close()
 

@@ -1,6 +1,13 @@
 import numpy as np
 
 ################################################################################
+# Backend and subsystem switches
+
+ARM_BACKEND = 'er3pro'  # 'er3pro' or 'kinova'
+ENABLE_BASE = False
+ENABLE_ARM = True
+
+################################################################################
 # Mobile base
 
 # Vehicle center to steer axis (m)
@@ -20,9 +27,20 @@ ARM_RPC_HOST = 'localhost'
 ARM_RPC_PORT = 50001
 RPC_AUTHKEY = b'secret password'
 
+# ER3Pro arm
+ER3PRO_IP = '192.168.0.160'
+ER3PRO_LOCAL_IP = None
+ER3PRO_MOVE_VELOCITY = 300
+ER3PRO_MOVE_ZONE = 10
+ER3PRO_GRIPPER_THRESHOLD = 0.5
+ER3PRO_GRIPPER_BOARD = 2
+ER3PRO_GRIPPER_DI1_PORT = 0
+ER3PRO_GRIPPER_DI2_PORT = 1
+
 # Cameras
 BASE_CAMERA_SERIAL = 'TODO'
-# WRIST_CAMERA_SERIAL = 'TODO'  # Not used by Kinova wrist camera
+WRIST_CAMERA_DEVICE = '2'  # '/dev/v4l/by-id/...' or camera index string
+USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
 POLICY_SERVER_HOST = 'localhost'
