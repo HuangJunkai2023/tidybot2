@@ -12,12 +12,27 @@ from constants import POLICY_CONTROL_FREQ
 
 def write_frames_to_mp4(frames, mp4_path):
     height, width, _ = frames[0].shape
-    fourcc = cv.VideoWriter_fourcc(*'avc1')
-    out = cv.VideoWriter(str(mp4_path), fourcc, POLICY_CONTROL_FREQ, (width, height))
+    codec_candidates = ['mp4v', 'avc1', 'H264']
+    out = None
+    chosen_codec = None
+
+    for codec in codec_candidates:
+        fourcc = cv.VideoWriter_fourcc(*codec)
+        writer = cv.VideoWriter(str(mp4_path), fourcc, POLICY_CONTROL_FREQ, (width, height))
+        if writer.isOpened():
+            out = writer
+            chosen_codec = codec
+            break
+        writer.release()
+
+    if out is None:
+        raise RuntimeError(f'Failed to open VideoWriter for {mp4_path}. Tried codecs: {codec_candidates}')
+
     for frame in frames:
         bgr_frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
         out.write(bgr_frame)
     out.release()
+    print(f'Video saved with codec {chosen_codec}: {mp4_path.name}')
 
 def read_frames_from_mp4(mp4_path):
     cap = cv.VideoCapture(str(mp4_path))

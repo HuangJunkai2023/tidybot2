@@ -100,12 +100,11 @@ class ER3ProCppBridgeArm:
     def execute_action(self, action):
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
         arm_quat = np.asarray(action['arm_quat'], dtype=np.float64)
-        rpy = R.from_quat(arm_quat).as_euler('xyz')
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         self.gripper_pos[:] = gripper_value
         self._request(
-            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} {rpy[0]} {rpy[1]} {rpy[2]} {gripper_value}',
+            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} {arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
             timeout=8.0,
         )
 
