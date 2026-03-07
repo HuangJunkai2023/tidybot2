@@ -5,8 +5,22 @@ import argparse
 import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
+from constants import ENABLE_ARM
+from constants import ARM_BACKEND
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy
+
+
+def move_arm_to_teleop_preset(env):
+    if not ENABLE_ARM or ARM_BACKEND != 'er3pro':
+        return
+
+    if getattr(env, 'arm', None) is None:
+        return
+
+    print('Moving arm to teleop preset pose...')
+    env.arm.move_to_teleop_preset()
+    print('Arm reached teleop preset pose')
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -32,6 +46,9 @@ def run_episode(env, policy, writer=None):
     # Wait for user to press "Start episode"
     print('Press "Start episode" in the web app when ready to start new episode')
     policy.reset()
+
+    move_arm_to_teleop_preset(env)
+
     print('Starting new episode')
 
     episode_ended = False

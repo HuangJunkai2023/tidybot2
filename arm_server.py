@@ -25,6 +25,8 @@ from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
 from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
+from constants import ER3PRO_TCP_OFFSET_Z
+from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
 
 
 class ER3ProCppBridgeArm:
@@ -47,6 +49,8 @@ class ER3ProCppBridgeArm:
             '--max-pos-accel', str(ER3PRO_MAX_POS_ACCEL),
             '--max-rot-accel', str(ER3PRO_MAX_ROT_ACCEL),
             '--cmd-timeout', str(ER3PRO_CMD_TIMEOUT),
+            '--tcp-offset-z', str(ER3PRO_TCP_OFFSET_Z),
+            '--preset-joints-deg', ','.join(str(float(v)) for v in ER3PRO_TELEOP_PRESET_JOINT_DEG),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
             '--gripper-di1-port', str(ER3PRO_GRIPPER_DI1_PORT),
@@ -96,6 +100,9 @@ class ER3ProCppBridgeArm:
     def reset(self):
         self._request('RESET', timeout=8.0)
         self.gripper_pos[:] = 1.0
+
+    def move_to_teleop_preset(self):
+        self._request('PRESET', timeout=8.0)
 
     def execute_action(self, action):
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
@@ -184,6 +191,9 @@ class KinovaArm:
             self.arm.stop_cyclic()
         self.arm.disconnect()
 
+    def move_to_teleop_preset(self):
+        return
+
 class Arm:
     def __init__(self):
         if ARM_BACKEND == 'er3pro':
@@ -201,6 +211,10 @@ class Arm:
 
     def get_state(self):
         return self.impl.get_state()
+
+    def move_to_teleop_preset(self):
+        if ARM_BACKEND == 'er3pro':
+            self.impl.move_to_teleop_preset()
 
     def close(self):
         self.impl.close()
