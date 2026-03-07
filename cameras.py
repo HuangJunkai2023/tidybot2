@@ -4,6 +4,8 @@
 import threading
 import time
 from pathlib import Path
+import re
+import subprocess
 import cv2 as cv
 import numpy as np
 from constants import BASE_CAMERA_SERIAL
@@ -53,6 +55,20 @@ class UVCCamera(Camera):
     def _resolve_device(self, device_hint):
         hint = str(device_hint).strip()
         if hint.startswith('/dev/'):
+            p = Path(hint)
+            if p.exists():
+                try:
+                    return str(p.resolve())
+                except Exception:
+                    return hint
+
+            # Fallback for missing /dev/v4l/by-id entries: extract video index from name
+            # e.g. ...-video-index0 -> /dev/video0
+            m = re.search(r'video-index(\d+)$', hint)
+            if m is not None:
+                fallback = Path(f'/dev/video{m.group(1)}')
+                if fallback.exists():
+                    return str(fallback)
             return hint
         if hint.isdigit():
             return int(hint)
@@ -64,18 +80,178 @@ class UVCCamera(Camera):
                 return str(matches[0])
         return hint
 
-    def get_cap(self, device_hint):
-        device = self._resolve_device(device_hint)
-        cap = cv.VideoCapture(device)
-        assert cap.isOpened(), f'Unable to open camera: {device_hint}'
+    def _candidate_devices(self, device_hint):
+        hint = str(device_hint).strip()
+        candidates = []
+
+        if hint.startswith('/dev/v4l/by-id/'):
+            by_id_path = Path(hint)
+            by_id_dir = by_id_path.parent
+            name = by_id_path.name
+            m = re.match(r'^(.*)-video-index\d+$', name)
+            if m is not None and by_id_dir.exists():
+                prefix = m.group(1)
+                siblings = sorted(by_id_dir.glob(f'{prefix}-video-index*'))
+                candidates.extend(str(p) for p in siblings)
+
+        candidates.append(device_hint)
+        resolved_candidates = [self._resolve_device(c) for c in candidates]
+        candidates.extend(resolved_candidates)
+
+        # Expand to all /dev/video* nodes that belong to the same USB camera group
+        # (RealSense often exposes color node that is not listed under the expected by-id index)
+        for c in list(resolved_candidates):
+            if isinstance(c, str) and c.startswith('/dev/video'):
+                for peer in self._same_video_group_devices(c):
+                    candidates.append(peer)
+
+        for c in list(resolved_candidates):
+            if isinstance(c, str) and c.startswith('/dev/video'):
+                try:
+                    candidates.append(int(c.replace('/dev/video', '')))
+                except Exception:
+                    pass
+
+        # Keep order, remove duplicates
+        ordered_unique = []
+        seen = set()
+        for c in candidates:
+            key = str(c)
+            if key not in seen:
+                seen.add(key)
+                ordered_unique.append(c)
+        return ordered_unique
+
+    def _video_group_key(self, device):
+        device_str = str(device)
+        m = re.match(r'^/dev/video(\d+)$', device_str)
+        if m is None:
+            return None
+        sys_node = Path(f'/sys/class/video4linux/video{m.group(1)}/device')
+        if not sys_node.exists():
+            return None
+        try:
+            resolved = str(sys_node.resolve())
+        except Exception:
+            return None
+        # Typical path includes .../<usb-node>:1.x/... ; use <usb-node> as camera group key
+        m2 = re.search(r'(.+):\d+\.\d+/', resolved)
+        if m2 is not None:
+            return m2.group(1)
+        return str(Path(resolved).parent)
+
+    def _same_video_group_devices(self, device):
+        key = self._video_group_key(device)
+        if key is None:
+            return []
+        devices = []
+        root = Path('/sys/class/video4linux')
+        if not root.exists():
+            return devices
+        for node in sorted(root.glob('video*')):
+            dev = f'/dev/{node.name}'
+            if self._video_group_key(dev) == key:
+                devices.append(dev)
+        return devices
+
+    def _v4l2_preference_score(self, device):
+        device_str = str(device)
+        if not device_str.startswith('/dev/video'):
+            return 0
+        try:
+            fmt_result = subprocess.run(
+                ['v4l2-ctl', '-d', device_str, '--list-formats-ext'],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+            all_result = subprocess.run(
+                ['v4l2-ctl', '-d', device_str, '--all'],
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+                check=False,
+            )
+        except Exception:
+            return 0
+        fmt_text = (fmt_result.stdout or '').upper()
+        all_text = (all_result.stdout or '').upper()
+        if not fmt_text:
+            return 0
+
+        has_yuyv = "'YUYV'" in fmt_text
+        has_mjpg = "'MJPG'" in fmt_text
+        has_rgb = "'RGB3'" in fmt_text or "'BGR3'" in fmt_text
+        has_uyvy = "'UYVY'" in fmt_text
+        has_depth = "'Z16 '" in fmt_text
+        has_grey = "'GREY'" in fmt_text
+
+        has_color = has_yuyv or has_mjpg or has_rgb or has_uyvy
+        is_processing_pipe = 'PROCESSING' in all_text
+
+        score = 0
+        if is_processing_pipe:
+            score += 6
+        if has_color:
+            score += 3
+        if has_yuyv or has_mjpg or has_rgb:
+            score += 3
+        if has_uyvy and not (has_yuyv or has_mjpg or has_rgb):
+            score -= 2
+        if has_depth:
+            score -= 4
+        if has_grey and not (has_yuyv or has_mjpg or has_rgb):
+            score -= 2
+        return score
+
+    def _configure_cap(self, cap):
         cap.set(cv.CAP_PROP_FOURCC, cv.VideoWriter_fourcc('M', 'J', 'P', 'G'))
         cap.set(cv.CAP_PROP_FRAME_WIDTH, self.frame_width)
         cap.set(cv.CAP_PROP_FRAME_HEIGHT, self.frame_height)
         cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
         cap.set(cv.CAP_PROP_AUTOFOCUS, 1 if self.autofocus else 0)
-        for _ in range(10):
-            cap.read()
-        return cap
+
+    def _readable_after_warmup(self, cap, attempts=20):
+        for _ in range(attempts):
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size > 0:
+                return True
+        return False
+
+    def get_cap(self, device_hint):
+        attempted = []
+        all_candidates = self._candidate_devices(device_hint)
+        scored_candidates = []
+        for i, candidate_hint in enumerate(all_candidates):
+            resolved = self._resolve_device(candidate_hint)
+            score = self._v4l2_preference_score(resolved)
+            scored_candidates.append((score, i, candidate_hint))
+
+        # Prefer likely color nodes first, then preserve original order
+        scored_candidates.sort(key=lambda x: (-x[0], x[1]))
+
+        for _, _, candidate_hint in scored_candidates:
+            device = self._resolve_device(candidate_hint)
+
+            # Try V4L2 backend first
+            for backend_name, backend in [('v4l2', cv.CAP_V4L2), ('default', None)]:
+                cap = cv.VideoCapture(device, backend) if backend is not None else cv.VideoCapture(device)
+                if not cap.isOpened():
+                    attempted.append(f'{candidate_hint} -> {device} ({backend_name}:open-fail)')
+                    cap.release()
+                    continue
+
+                self._configure_cap(cap)
+
+                # Warm up and ensure this node is actually readable
+                if self._readable_after_warmup(cap):
+                    return cap
+
+                attempted.append(f'{candidate_hint} -> {device} ({backend_name}:read-fail)')
+                cap.release()
+
+        assert False, f"Unable to open camera: {device_hint}; attempts={'; '.join(attempted)}"
 
 class LogitechCamera(Camera):
     def __init__(self, serial, frame_width=640, frame_height=360, focus=0):

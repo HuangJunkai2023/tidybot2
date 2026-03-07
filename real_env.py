@@ -34,8 +34,20 @@ class RealEnv:
             raise Exception('At least one subsystem must be enabled')
 
         # Cameras
-        self.base_camera = DummyCamera(frame_width=640, frame_height=360) if BASE_CAMERA_SERIAL == 'TODO' else LogitechCamera(BASE_CAMERA_SERIAL)
+        self.base_camera = self._create_base_camera(BASE_CAMERA_SERIAL)
         self.wrist_camera = KinovaCamera() if USE_KINOVA_WRIST_CAMERA else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=640, frame_height=480)
+
+    def _create_base_camera(self, camera_hint):
+        hint = str(camera_hint).strip()
+        if hint == 'TODO':
+            return DummyCamera(frame_width=640, frame_height=360)
+
+        # If hint looks like a device index/path, use generic UVC camera.
+        if hint.isdigit() or hint.startswith('/dev/'):
+            return UVCCamera(hint, frame_width=640, frame_height=360)
+
+        # Otherwise treat it as Logitech C930e serial suffix.
+        return LogitechCamera(hint)
 
     def get_obs(self):
         obs = {}
