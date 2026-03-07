@@ -12,3 +12,5 @@ key.pem
 
 # Local datasets and outputs
 data/
+logs/
+_*/
