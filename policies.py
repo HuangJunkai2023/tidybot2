@@ -79,16 +79,25 @@ class WebServer:
 DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
 
 # Convert coordinate system from WebXR to robot
+# def convert_webxr_pose(pos, quat):
+#     # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
+#     pos = np.array([-pos['y'], pos['x'], -pos['z']], dtype=np.float64)
+#     # Quaternion axis remap tuned for ER3Pro teleop:
+#     # make phone horizontal rotation (WebXR y-axis) align with robot yaw (z-axis).
+#     rot = R.from_quat([-quat['z'], quat['x'], quat['y'], quat['w']])
+
+#     # Apply offset so that rotations are around device center instead of device camera
+#     pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
+
+#     return pos, rot
+
 def convert_webxr_pose(pos, quat):
-    # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
     pos = np.array([-pos['y'], pos['x'], -pos['z']], dtype=np.float64)
-    # Quaternion axis remap tuned for ER3Pro teleop:
-    # make phone horizontal rotation (WebXR y-axis) align with robot yaw (z-axis).
-    rot = R.from_quat([-quat['z'], quat['x'], quat['y'], quat['w']])
 
-    # Apply offset so that rotations are around device center instead of device camera
+    # yaw 和 roll 极性翻转
+    rot = R.from_quat([quat['z'], quat['x'], -quat['y'], quat['w']])
+
     pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
-
     return pos, rot
 
 TWO_PI = 2 * math.pi
