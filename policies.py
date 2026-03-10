@@ -109,25 +109,24 @@ class WebServer:
 
 DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
 
-# Convert coordinate system from WebXR to robot
-# def convert_webxr_pose(pos, quat):
-#     # WebXR: +x right, +y up, +z back; Robot: +x forward, +y left, +z up
-#     pos = np.array([-pos['y'], pos['x'], -pos['z']], dtype=np.float64)
-#     # Quaternion axis remap tuned for ER3Pro teleop:
-#     # make phone horizontal rotation (WebXR y-axis) align with robot yaw (z-axis).
-#     rot = R.from_quat([-quat['z'], quat['x'], quat['y'], quat['w']])
+# WebXR viewer space: +x right, +y up, +z back
+# Robot teleop space: +x forward, +y left, +z up
+WEBXR_TO_ROBOT_BASIS = np.array([
+    [0.0, 0.0, -1.0],
+    [-1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+], dtype=np.float64)
+WEBXR_TO_ROBOT_ROT = R.from_matrix(WEBXR_TO_ROBOT_BASIS)
 
-#     # Apply offset so that rotations are around device center instead of device camera
-#     pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
-
-#     return pos, rot
 
 def convert_webxr_pose(pos, quat):
-    pos = np.array([-pos['y'], pos['x'], -pos['z']], dtype=np.float64)
+    pos = WEBXR_TO_ROBOT_BASIS @ np.array([pos['x'], pos['y'], pos['z']], dtype=np.float64)
+    
+    # Use the same basis change for orientation instead of ad-hoc component shuffles.
+    webxr_rot = R.from_quat([quat['x'], quat['y'], quat['z'], quat['w']])
+    rot = WEBXR_TO_ROBOT_ROT * webxr_rot * WEBXR_TO_ROBOT_ROT.inv()
 
-    # yaw 和 roll 极性翻转
-    rot = R.from_quat([quat['z'], quat['x'], -quat['y'], quat['w']])
-
+    # Apply offset so that rotations are around device center instead of device camera.
     pos = pos + rot.apply(DEVICE_CAMERA_OFFSET)
     return pos, rot
 
