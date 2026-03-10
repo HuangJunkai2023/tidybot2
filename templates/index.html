@@ -95,7 +95,7 @@
       let xrRefSpace = null;
       let lastSendTimeMs = 0;
       let lastIdleSendTimeMs = 0;
-      const activeSendIntervalMs = 33;
+      const activeSendIntervalMs = 50;
       const idleSendIntervalMs = 200;
 
       // WebGL scene globals
@@ -254,15 +254,15 @@
           if (pose) {
             data.teleop_mode = teleopMode;
             data.position = {
-              x: pose.transform.inverse.position.x,
-              y: pose.transform.inverse.position.y,
-              z: pose.transform.inverse.position.z,
+              x: pose.transform.position.x,
+              y: pose.transform.position.y,
+              z: pose.transform.position.z,
             };
             data.orientation = {
-              x: pose.transform.inverse.orientation.x,
-              y: pose.transform.inverse.orientation.y,
-              z: pose.transform.inverse.orientation.z,
-              w: pose.transform.inverse.orientation.w,
+              x: pose.transform.orientation.x,
+              y: pose.transform.orientation.y,
+              z: pose.transform.orientation.z,
+              w: pose.transform.orientation.w,
             };
           }
           if (teleopMode === 'arm') {
