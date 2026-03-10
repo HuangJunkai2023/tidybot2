@@ -4,7 +4,8 @@
 import numpy as np
 from cameras import KinovaCamera, LogitechCamera, UVCCamera, DummyCamera
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
-from constants import BASE_CAMERA_SERIAL, WRIST_CAMERA_DEVICE, USE_KINOVA_WRIST_CAMERA
+from constants import BASE_CAMERA_DEVICE, BASE_CAMERA_WIDTH, BASE_CAMERA_HEIGHT
+from constants import WRIST_CAMERA_DEVICE, WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT, USE_KINOVA_WRIST_CAMERA
 from constants import ENABLE_BASE, ENABLE_ARM
 from arm_server import ArmManager
 from base_server import BaseManager
@@ -34,20 +35,24 @@ class RealEnv:
             raise Exception('At least one subsystem must be enabled')
 
         # Cameras
-        self.base_camera = self._create_base_camera(BASE_CAMERA_SERIAL)
-        self.wrist_camera = KinovaCamera() if USE_KINOVA_WRIST_CAMERA else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=640, frame_height=480)
+        self.base_camera = self._create_base_camera(BASE_CAMERA_DEVICE)
+        self.wrist_camera = (
+            KinovaCamera()
+            if USE_KINOVA_WRIST_CAMERA
+            else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=WRIST_CAMERA_WIDTH, frame_height=WRIST_CAMERA_HEIGHT)
+        )
 
     def _create_base_camera(self, camera_hint):
         hint = str(camera_hint).strip()
         if hint == 'TODO':
-            return DummyCamera(frame_width=640, frame_height=360)
+            return DummyCamera(frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
 
         # If hint looks like a device index/path, use generic UVC camera.
         if hint.isdigit() or hint.startswith('/dev/'):
-            return UVCCamera(hint, frame_width=640, frame_height=360)
+            return UVCCamera(hint, frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
 
         # Otherwise treat it as Logitech C930e serial suffix.
-        return LogitechCamera(hint)
+        return LogitechCamera(hint, frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
 
     def get_obs(self):
         obs = {}

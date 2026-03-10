@@ -6,7 +6,7 @@ import math
 import socket
 import threading
 import time
-from queue import Queue
+from queue import Empty, Queue
 import cv2 as cv
 import numpy as np
 import zmq
@@ -22,11 +22,39 @@ class Policy:
     def step(self, obs):
         raise NotImplementedError
 
+
+class TeleopMessageBuffer:
+    def __init__(self):
+        self.state_updates = Queue()
+        self.latest_teleop = None
+        self.lock = threading.Lock()
+
+    def put(self, data):
+        if 'state_update' in data:
+            self.state_updates.put(data)
+            return
+
+        with self.lock:
+            self.latest_teleop = data
+
+    def get_state_update(self):
+        try:
+            return self.state_updates.get_nowait()
+        except Empty:
+            return None
+
+    def pop_latest_teleop(self):
+        with self.lock:
+            latest = self.latest_teleop
+            self.latest_teleop = None
+        return latest
+
 class WebServer:
-    def __init__(self, queue):
+    def __init__(self, message_buffer):
         self.app = Flask(__name__)
         self.socketio = SocketIO(self.app)
-        self.queue = queue
+        self.message_buffer = message_buffer
+        self.last_echo_time = 0.0
 
         @self.app.route('/')
         def index():
@@ -34,14 +62,17 @@ class WebServer:
 
         @self.socketio.on('message')
         def handle_message(data):
-            # Send the timestamp back for RTT calculation (expected RTT on 5 GHz Wi-Fi is 7 ms)
-            emit('echo', data['timestamp'])
+            # Throttle RTT echos to avoid flooding the browser main thread.
+            now = time.time()
+            if now - self.last_echo_time >= 0.2:
+                emit('echo', data['timestamp'])
+                self.last_echo_time = now
 
             # Stamp with server time so staleness check is clock-independent
-            data['server_recv_time'] = time.time()
+            data['server_recv_time'] = now
 
-            # Add data to queue for processing
-            self.queue.put(data)
+            # Keep only the newest teleop packet; state updates are queued separately.
+            self.message_buffer.put(data)
 
         # Reduce verbose Flask log output
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -243,13 +274,13 @@ class TeleopController:
 # Teleop using WebXR phone web app
 class TeleopPolicy(Policy):
     def __init__(self, use_ssl=False):
-        self.web_server_queue = Queue()
+        self.message_buffer = TeleopMessageBuffer()
         self.teleop_controller = None
         self.teleop_state = None  # States: episode_started -> episode_ended -> reset_env
         self.episode_ended = False
 
         # Web server for serving the WebXR phone web app
-        server = WebServer(self.web_server_queue)
+        server = WebServer(self.message_buffer)
         threading.Thread(target=lambda: server.run(use_ssl=use_ssl), daemon=True).start()
 
         # Listener thread to process messages from WebXR client
@@ -281,15 +312,14 @@ class TeleopPolicy(Policy):
 
     def listener_loop(self):
         while True:
-            # Drain the queue: process all state updates, keep only the latest teleop message
-            latest_data = None
-            while not self.web_server_queue.empty():
-                item = self.web_server_queue.get()
-                # State updates must always be processed immediately
-                if 'state_update' in item:
-                    self.teleop_state = item['state_update']
-                else:
-                    latest_data = item  # Keep overwriting so we only process the newest
+            # Drain state updates first.
+            while True:
+                item = self.message_buffer.get_state_update()
+                if item is None:
+                    break
+                self.teleop_state = item['state_update']
+
+            latest_data = self.message_buffer.pop_latest_teleop()
 
             if latest_data is not None:
                 # Use server-side receive time to avoid phone/server clock skew
@@ -379,8 +409,8 @@ if __name__ == '__main__':
         'arm_pos': np.zeros(3),
         'arm_quat': np.array([0.0, 0.0, 0.0, 1.0]),
         'gripper_pos': np.zeros(1),
-        'base_image': np.zeros((640, 360, 3)),
-        'wrist_image': np.zeros((640, 480, 3)),
+        'base_image': np.zeros((720, 1280, 3)),
+        'wrist_image': np.zeros((720, 1080, 3)),
     }
     policy = TeleopPolicy()
     # policy = RemotePolicy()

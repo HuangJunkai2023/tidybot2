@@ -82,6 +82,10 @@
         const rtt = Date.now() - timestamp;
         document.getElementById('info').innerText = rttStats.calculate(rtt);
       });
+
+      document.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+      });
     </script>
     <script type="module">
       import { WebXRButton } from '/static/js/webxr-button.js';
@@ -89,6 +93,10 @@
       // XR globals
       let xrButton = null;
       let xrRefSpace = null;
+      let lastSendTimeMs = 0;
+      let lastIdleSendTimeMs = 0;
+      const activeSendIntervalMs = 33;
+      const idleSendIntervalMs = 200;
 
       // WebGL scene globals
       let gl = null;
@@ -129,32 +137,12 @@
         gl = canvas.getContext('webgl', {
           xrCompatible: true,
         });
+        addTouchListeners();
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         session.requestReferenceSpace('local').then((refSpace) => {
           xrRefSpace = refSpace;
           session.requestAnimationFrame(onXRFrame);
         });
-
-        // Use XR session select events for touch detection in immersive AR
-        session.addEventListener('selectstart', (event) => {
-          if (event.inputSource.targetRayMode === 'screen' && touchId === undefined) {
-            touchId = event.inputSource;
-            // Can't rely on clientX/Y from XR events; use center-screen defaults
-            // and let pointer events override if they fire
-            touchStartY = window.innerHeight / 2;
-            teleopMode = 'arm';  // Default; pointer events will correct if available
-            touchDeltaY = 0;
-          }
-        });
-
-        session.addEventListener('selectend', (event) => {
-          if (event.inputSource === touchId) {
-            touchId = undefined;
-          }
-        });
-
-        // Also listen for pointer events on document (fires in DOM overlay context)
-        addPointerListeners();
 
         // Let the server know user has started the episode
         const data = { timestamp: Date.now(), state_update: 'episode_started' };
@@ -180,77 +168,88 @@
         gl = null;
       }
 
-      // Touch/pointer event handling
+      // Touch event handling
       let touchId; let touchStartY; let touchDeltaY; let teleopMode;
-      let pointerListenersAdded = false;
+      let touchListenersAdded = false;
 
-      function addPointerListeners() {
-        if (pointerListenersAdded) return;
-        pointerListenersAdded = true;
+      function addTouchListeners() {
+        if (touchListenersAdded) return;
+        touchListenersAdded = true;
 
-        // Pointer events work in WebXR DOM overlay; touch events do NOT
-        // Critical: use { passive: false } on touchstart to call preventDefault()
-        // which blocks Android long-press selection BEFORE it cancels the pointer.
-        // But allow taps on buttons/links so "End episode" etc. still work.
+        function handleTouch(touch) {
+          touchDeltaY = (touchStartY - touch.clientY) / (0.2 * window.innerHeight);
+          touchDeltaY = Math.min(1, Math.max(-1, touchDeltaY));
+        }
+
+        function shouldIgnoreTarget(target) {
+          const tag = target?.tagName?.toUpperCase();
+          return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT';
+        }
+
         document.addEventListener('touchstart', (event) => {
-          const tag = event.target.tagName.toUpperCase();
-          if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT') return;
+          if (shouldIgnoreTarget(event.target)) return;
+          if (touchId === undefined) {
+            const touch = event.changedTouches[0];
+            touchId = touch.identifier;
+            touchStartY = touch.clientY;
+            teleopMode = touch.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
+            handleTouch(touch);
+          }
           event.preventDefault();
         }, { passive: false });
 
         document.addEventListener('touchmove', (event) => {
+          if (shouldIgnoreTarget(event.target)) return;
+          for (const touch of event.changedTouches) {
+            if (touchId === touch.identifier) {
+              handleTouch(touch);
+            }
+          }
           event.preventDefault();
         }, { passive: false });
 
-        document.addEventListener('pointerdown', (event) => {
-          event.preventDefault();
-          touchId = event.pointerId;
-          touchStartY = event.clientY;
-          teleopMode = event.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
-          touchDeltaY = 0;
-        });
-
-        document.addEventListener('pointermove', (event) => {
-          event.preventDefault();
-          if (touchId === event.pointerId) {
-            touchDeltaY = (touchStartY - event.clientY) / (0.2 * window.innerHeight);
-            touchDeltaY = Math.min(1, Math.max(-1, touchDeltaY));
+        function updateTouchIds(event) {
+          for (const touch of event.changedTouches) {
+            if (touchId === touch.identifier) {
+              touchId = undefined;
+            }
           }
-        });
+        }
 
-        document.addEventListener('pointerup', (event) => {
-          if (touchId === event.pointerId) touchId = undefined;
-        });
-
-        // Do NOT clear touchId on pointercancel: if the system briefly interrupts
-        // (e.g. notification), we stay active. Only pointerup truly ends the touch.
-        // document.addEventListener('pointercancel', ...)  <-- intentionally omitted
-
-        // Prevent long-press context menu on Android/iOS
+        document.addEventListener('touchend', updateTouchIds, { passive: false });
+        document.addEventListener('touchcancel', updateTouchIds, { passive: false });
         document.addEventListener('contextmenu', (event) => {
           event.preventDefault();
         });
-      }
-
-      // touchActive: true when either XR select or pointer is held
-      function touchActive() {
-        return touchId !== undefined;
       }
 
       function onXRFrame(t, frame) {
         frame.session.requestAnimationFrame(onXRFrame);
 
         // Visualize status of touch control
-        const r = (touchActive() && teleopMode === 'base') ? 0.25 : 0;
-        const b = (touchActive() && teleopMode === 'arm')
+        const active = touchId !== undefined;
+        const r = (active && teleopMode === 'base') ? 0.25 : 0;
+        const b = (active && teleopMode === 'arm')
           ? (Math.abs(touchDeltaY) === 1 ? 1 : 0.25 + 0.25 * touchDeltaY)
           : 0;
         gl.clearColor(r, 0, b, 0.5);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
-        // Send data to server
-        const data = { timestamp: Date.now(), device_id: deviceId };
-        if (touchActive()) {
+        // Send data to server at a bounded rate to avoid overloading mobile browsers.
+        const nowMs = Date.now();
+        const sendIntervalMs = active ? activeSendIntervalMs : idleSendIntervalMs;
+        const lastSentMs = active ? lastSendTimeMs : lastIdleSendTimeMs;
+        if (nowMs - lastSentMs < sendIntervalMs) {
+          return;
+        }
+        if (active) {
+          lastSendTimeMs = nowMs;
+        } else {
+          lastIdleSendTimeMs = nowMs;
+        }
+
+        const data = { timestamp: nowMs, device_id: deviceId };
+        if (active) {
           const pose = frame.getViewerPose(xrRefSpace);
           if (pose) {
             data.teleop_mode = teleopMode;

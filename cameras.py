@@ -8,7 +8,8 @@ import re
 import subprocess
 import cv2 as cv
 import numpy as np
-from constants import BASE_CAMERA_SERIAL
+from constants import BASE_CAMERA_DEVICE, BASE_CAMERA_WIDTH, BASE_CAMERA_HEIGHT
+from constants import WRIST_CAMERA_DEVICE, WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT, USE_KINOVA_WRIST_CAMERA
 
 class Camera:
     def __init__(self):
@@ -373,8 +374,17 @@ class KinovaCamera(Camera):
             vision_config.DoSensorFocusAction(sensor_focus_action, vision_device_id)
 
 if __name__ == '__main__':
-    base_camera = DummyCamera() if BASE_CAMERA_SERIAL == 'TODO' else LogitechCamera(BASE_CAMERA_SERIAL)
-    wrist_camera = KinovaCamera()
+    if BASE_CAMERA_DEVICE == 'TODO':
+        base_camera = DummyCamera(frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
+    elif str(BASE_CAMERA_DEVICE).strip().isdigit() or str(BASE_CAMERA_DEVICE).startswith('/dev/'):
+        base_camera = UVCCamera(BASE_CAMERA_DEVICE, frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
+    else:
+        base_camera = LogitechCamera(BASE_CAMERA_DEVICE, frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
+    wrist_camera = (
+        KinovaCamera()
+        if USE_KINOVA_WRIST_CAMERA
+        else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=WRIST_CAMERA_WIDTH, frame_height=WRIST_CAMERA_HEIGHT)
+    )
     try:
         while True:
             base_image = base_camera.get_image()
