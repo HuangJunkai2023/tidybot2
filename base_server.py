@@ -88,16 +88,21 @@ class Ros1UdpBaseBackend:
         if dt <= 0.0:
             return
 
-        theta = self.pose[2]
-        vx_local, vy_local, wz = cmd
-        cos_t = math.cos(theta)
-        sin_t = math.sin(theta)
-        vx_global = cos_t * vx_local - sin_t * vy_local
-        vy_global = sin_t * vx_local + cos_t * vy_local
+        x, y, theta = self.pose
+        v, _, wz = cmd
 
-        self.pose[0] += vx_global * dt
-        self.pose[1] += vy_global * dt
-        self.pose[2] = wrap_to_pi(self.pose[2] + wz * dt)
+        # Differential-drive / unicycle exact integration over dt.
+        if abs(wz) < 1e-6:
+            x += v * math.cos(theta) * dt
+            y += v * math.sin(theta) * dt
+            theta = wrap_to_pi(theta)
+        else:
+            theta_new = theta + wz * dt
+            x += (v / wz) * (math.sin(theta_new) - math.sin(theta))
+            y += -(v / wz) * (math.cos(theta_new) - math.cos(theta))
+            theta = wrap_to_pi(theta_new)
+
+        self.pose[:] = (x, y, theta)
 
     def _publisher_loop(self):
         period = 1.0 / max(BASE_CMD_UDP_PUBLISH_RATE, 1.0)
@@ -136,6 +141,8 @@ class Ros1UdpBaseBackend:
             self._integrate_pose(self.latest_cmd, now)
             self.target_pose[:] = target_pose
 
+            # Differential-drive constraint: no lateral velocity.
+            # Keep teleop behavior stable by controlling forward error and yaw error.
             err_global = self.target_pose - self.pose
             err_global[2] = wrap_to_pi(err_global[2])
 
@@ -143,13 +150,14 @@ class Ros1UdpBaseBackend:
             cos_t = math.cos(theta)
             sin_t = math.sin(theta)
             err_local_x = cos_t * err_global[0] + sin_t * err_global[1]
-            err_local_y = -sin_t * err_global[0] + cos_t * err_global[1]
 
-            vx = np.clip(BASE_POS_KP_LINEAR * err_local_x, -BASE_MAX_VEL_XY, BASE_MAX_VEL_XY)
-            vy = np.clip(BASE_POS_KP_LINEAR * err_local_y, -BASE_MAX_VEL_XY, BASE_MAX_VEL_XY)
-            wz = np.clip(BASE_POS_KP_ANGULAR * err_global[2], -BASE_MAX_VEL_THETA, BASE_MAX_VEL_THETA)
+            vx = BASE_POS_KP_LINEAR * err_local_x
+            wz = BASE_POS_KP_ANGULAR * err_global[2]
 
-            self.latest_cmd[:] = (vx, vy, wz)
+            vx = np.clip(vx, -BASE_MAX_VEL_XY, BASE_MAX_VEL_XY)
+            wz = np.clip(wz, -BASE_MAX_VEL_THETA, BASE_MAX_VEL_THETA)
+
+            self.latest_cmd[:] = (vx, 0.0, wz)
             self.last_action_time = now
 
     def get_state(self):
