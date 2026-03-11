@@ -4,7 +4,7 @@ import numpy as np
 # Backend and subsystem switches
 
 ARM_BACKEND = 'er3pro'  # 'er3pro' or 'kinova'
-ENABLE_BASE = False
+ENABLE_BASE = True
 ENABLE_ARM = True
 
 ################################################################################
@@ -27,16 +27,50 @@ ARM_RPC_HOST = 'localhost'
 ARM_RPC_PORT = 50001
 RPC_AUTHKEY = b'secret password'
 
+# Mobile base backend
+BASE_BACKEND = 'ros1_udp'  # 'ros1_udp' or 'native'
+
+# ROS1 Docker bridge (see src/p500/docker_cmd_vel_server.py)
+BASE_CMD_UDP_HOST = '127.0.0.1'
+BASE_CMD_UDP_PORT = 15000
+BASE_CMD_UDP_PUBLISH_RATE = 30.0
+BASE_CMD_TIMEOUT = 0.25  # s
+
+# Pose tracking and position-to-velocity control gains for ros1_udp backend
+BASE_MAX_VEL_XY = 0.35      # m/s
+BASE_MAX_VEL_THETA = 1.20   # rad/s
+BASE_POS_KP_LINEAR = 1.60
+BASE_POS_KP_ANGULAR = 2.00
+
 # ER3Pro arm
 ER3PRO_IP = '192.168.0.160'
 ER3PRO_LOCAL_IP = '192.168.0.200'
 ER3PRO_MOVE_VELOCITY = 300
 ER3PRO_MOVE_ZONE = 10
-ER3PRO_ENABLE_GRIPPER = False
+ER3PRO_ENABLE_GRIPPER = True
+
+# Gripper backend for ER3Pro C++ bridge: 'rs485_epg' (recommended) or 'di'
+ER3PRO_GRIPPER_BACKEND = 'rs485_epg'
+
+# Legacy DI-based gripper control
 ER3PRO_GRIPPER_THRESHOLD = 0.5
 ER3PRO_GRIPPER_BOARD = 2
 ER3PRO_GRIPPER_DI1_PORT = 0
 ER3PRO_GRIPPER_DI2_PORT = 1
+
+# RS485 + Modbus RTU gripper control (Jodell EPG)
+ER3PRO_GRIPPER_RS485_SLAVE_ID = 9
+ER3PRO_GRIPPER_RS485_ENABLE_ON_START = True
+ER3PRO_GRIPPER_RS485_INIT_REG = 0x0100
+ER3PRO_GRIPPER_RS485_INIT_VALUE = 0xA5
+ER3PRO_GRIPPER_RS485_TORQUE_REG = 0x0101
+ER3PRO_GRIPPER_RS485_POS_REG = 0x0103
+ER3PRO_GRIPPER_RS485_SPEED_REG = 0x0104
+ER3PRO_GRIPPER_RS485_POS_NOW_REG = 0x0202
+ER3PRO_GRIPPER_RS485_OPEN_POS = 0
+ER3PRO_GRIPPER_RS485_CLOSE_POS = 255
+ER3PRO_GRIPPER_RS485_SPEED = 255
+ER3PRO_GRIPPER_RS485_TORQUE = 80
 ER3PRO_CPP_BRIDGE_BIN = '../xCoreSDK_cpp-v0.7.1/build/bin/arm_bridge'
 ER3PRO_FOLLOW_SCALE = 0.8   # FollowPosition speed scale in [0,1], larger -> more responsive
 ER3PRO_RT_FILTER_FREQ = 15.0 # Hz, larger -> less lag, smaller -> smoother

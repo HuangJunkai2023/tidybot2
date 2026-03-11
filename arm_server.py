@@ -20,7 +20,14 @@ from constants import ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
 from constants import ARM_BACKEND
 from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE
 from constants import ER3PRO_ENABLE_GRIPPER
+from constants import ER3PRO_GRIPPER_BACKEND
 from constants import ER3PRO_GRIPPER_THRESHOLD, ER3PRO_GRIPPER_BOARD, ER3PRO_GRIPPER_DI1_PORT, ER3PRO_GRIPPER_DI2_PORT
+from constants import ER3PRO_GRIPPER_RS485_SLAVE_ID, ER3PRO_GRIPPER_RS485_ENABLE_ON_START
+from constants import ER3PRO_GRIPPER_RS485_INIT_REG, ER3PRO_GRIPPER_RS485_INIT_VALUE
+from constants import ER3PRO_GRIPPER_RS485_TORQUE_REG, ER3PRO_GRIPPER_RS485_POS_REG, ER3PRO_GRIPPER_RS485_SPEED_REG
+from constants import ER3PRO_GRIPPER_RS485_POS_NOW_REG
+from constants import ER3PRO_GRIPPER_RS485_OPEN_POS, ER3PRO_GRIPPER_RS485_CLOSE_POS
+from constants import ER3PRO_GRIPPER_RS485_SPEED, ER3PRO_GRIPPER_RS485_TORQUE
 from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
@@ -52,10 +59,24 @@ class ER3ProCppBridgeArm:
             '--tcp-offset-z', str(ER3PRO_TCP_OFFSET_Z),
             '--preset-joints-deg', ','.join(str(float(v)) for v in ER3PRO_TELEOP_PRESET_JOINT_DEG),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
+            '--gripper-backend', ER3PRO_GRIPPER_BACKEND,
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
             '--gripper-di1-port', str(ER3PRO_GRIPPER_DI1_PORT),
             '--gripper-di2-port', str(ER3PRO_GRIPPER_DI2_PORT),
+            '--gripper-rs485-slave-id', str(ER3PRO_GRIPPER_RS485_SLAVE_ID),
+            '--gripper-rs485-init-reg', str(ER3PRO_GRIPPER_RS485_INIT_REG),
+            '--gripper-rs485-init-value', str(ER3PRO_GRIPPER_RS485_INIT_VALUE),
+            '--gripper-rs485-torque-reg', str(ER3PRO_GRIPPER_RS485_TORQUE_REG),
+            '--gripper-rs485-pos-reg', str(ER3PRO_GRIPPER_RS485_POS_REG),
+            '--gripper-rs485-speed-reg', str(ER3PRO_GRIPPER_RS485_SPEED_REG),
+            '--gripper-rs485-pos-now-reg', str(ER3PRO_GRIPPER_RS485_POS_NOW_REG),
+            '--gripper-rs485-open-pos', str(ER3PRO_GRIPPER_RS485_OPEN_POS),
+            '--gripper-rs485-close-pos', str(ER3PRO_GRIPPER_RS485_CLOSE_POS),
+            '--gripper-rs485-speed', str(ER3PRO_GRIPPER_RS485_SPEED),
+            '--gripper-rs485-torque', str(ER3PRO_GRIPPER_RS485_TORQUE),
         ]
+        if ER3PRO_GRIPPER_RS485_ENABLE_ON_START:
+            cmd.append('--gripper-rs485-enable-on-start')
         if ER3PRO_LOCAL_IP:
             cmd.extend(['--local-ip', ER3PRO_LOCAL_IP])
         if not ER3PRO_ENABLE_GRIPPER:
