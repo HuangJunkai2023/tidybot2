@@ -11,7 +11,9 @@
 import queue
 import subprocess
 import sys
+import threading
 import time
+import importlib.util
 from pathlib import Path
 from multiprocessing.managers import BaseManager as MPBaseManager
 import numpy as np
@@ -28,6 +30,10 @@ from constants import ER3PRO_GRIPPER_RS485_TORQUE_REG, ER3PRO_GRIPPER_RS485_POS_
 from constants import ER3PRO_GRIPPER_RS485_POS_NOW_REG
 from constants import ER3PRO_GRIPPER_RS485_OPEN_POS, ER3PRO_GRIPPER_RS485_CLOSE_POS
 from constants import ER3PRO_GRIPPER_RS485_SPEED, ER3PRO_GRIPPER_RS485_TORQUE
+from constants import ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, ER3PRO_GRIPPER_USB_SLAVE_ID
+from constants import ER3PRO_GRIPPER_USB_SPEED, ER3PRO_GRIPPER_USB_TORQUE
+from constants import ER3PRO_GRIPPER_USB_OPEN_POS, ER3PRO_GRIPPER_USB_CLOSE_POS
+from constants import ER3PRO_GRIPPER_USB_MIN_CMD_INTERVAL
 from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
@@ -36,13 +42,90 @@ from constants import ER3PRO_TCP_OFFSET_Z
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
 
 
+def _check_jodell_runtime_deps():
+    missing = []
+    for module_name in ('serial', 'modbus_tk'):
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(module_name)
+    if missing:
+        raise ModuleNotFoundError(
+            'Missing Jodell runtime deps: ' + ', '.join(missing)
+            + '. Install with: pip install pyserial modbus-tk'
+        )
+
+
+def _import_epg_control():
+    _check_jodell_runtime_deps()
+    try:
+        from jodellSdk.jodellSdkDemo import EpgClawControl  # type: ignore
+        return EpgClawControl
+    except Exception:
+        wheel_path = Path(__file__).resolve().parent.parent / 'jodell/python/JodellTool-0.1.5-py3-none-any.whl'
+        if wheel_path.exists():
+            sys.path.insert(0, str(wheel_path))
+            from jodellSdk.jodellSdkDemo import EpgClawControl  # type: ignore
+            return EpgClawControl
+        raise
+
+
+class JodellUsbGripper:
+    def __init__(self):
+        EpgClawControl = _import_epg_control()
+        self.claw = EpgClawControl()
+        self.connected = False
+        self.last_cmd_time = 0.0
+        self.last_cmd_pos = None
+
+        ret = self.claw.serialOperation(ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, True)
+        if ret != 1:
+            raise RuntimeError(f'Jodell serialOperation connect failed: {ret}')
+        self.connected = True
+
+        ret = self.claw.enableClamp(ER3PRO_GRIPPER_USB_SLAVE_ID, True)
+        if ret != 1:
+            raise RuntimeError(f'Jodell enableClamp failed: {ret}')
+
+    def _norm_to_pos(self, value):
+        value = float(np.clip(value, 0.0, 1.0))
+        # Keep tidybot convention: 1=open, 0=close.
+        return int(round(ER3PRO_GRIPPER_USB_CLOSE_POS + value * (ER3PRO_GRIPPER_USB_OPEN_POS - ER3PRO_GRIPPER_USB_CLOSE_POS)))
+
+    def command(self, value):
+        target_pos = self._norm_to_pos(value)
+        now = time.monotonic()
+
+        # Avoid saturating the serial bus with tiny updates.
+        if self.last_cmd_pos is not None and abs(target_pos - self.last_cmd_pos) < 2:
+            return
+        if now - self.last_cmd_time < ER3PRO_GRIPPER_USB_MIN_CMD_INTERVAL:
+            return
+
+        ret = self.claw.runWithParam(ER3PRO_GRIPPER_USB_SLAVE_ID, target_pos, ER3PRO_GRIPPER_USB_SPEED, ER3PRO_GRIPPER_USB_TORQUE)
+        if ret != 1:
+            print(f'[jodell_usb] runWithParam failed: {ret}', file=sys.stderr, flush=True)
+            return
+
+        self.last_cmd_time = now
+        self.last_cmd_pos = target_pos
+
+    def close(self):
+        if self.connected:
+            ret = self.claw.serialOperation(ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, False)
+            if ret != 1:
+                print(f'[jodell_usb] serial close failed: {ret}', file=sys.stderr, flush=True)
+            self.connected = False
+
+
 class ER3ProCppBridgeArm:
     def __init__(self):
         self.gripper_pos = np.array([1.0])
+        self.usb_gripper = None
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
         if not bridge_path.exists():
             raise RuntimeError(f'ER3Pro C++ bridge not found: {bridge_path}')
+
+        bridge_gripper_backend = ER3PRO_GRIPPER_BACKEND if ER3PRO_GRIPPER_BACKEND in ('di', 'rs485_epg') else 'di'
 
         cmd = [
             str(bridge_path),
@@ -59,7 +142,7 @@ class ER3ProCppBridgeArm:
             '--tcp-offset-z', str(ER3PRO_TCP_OFFSET_Z),
             '--preset-joints-deg', ','.join(str(float(v)) for v in ER3PRO_TELEOP_PRESET_JOINT_DEG),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
-            '--gripper-backend', ER3PRO_GRIPPER_BACKEND,
+            '--gripper-backend', bridge_gripper_backend,
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
             '--gripper-di1-port', str(ER3PRO_GRIPPER_DI1_PORT),
             '--gripper-di2-port', str(ER3PRO_GRIPPER_DI2_PORT),
@@ -79,7 +162,8 @@ class ER3ProCppBridgeArm:
             cmd.append('--gripper-rs485-enable-on-start')
         if ER3PRO_LOCAL_IP:
             cmd.extend(['--local-ip', ER3PRO_LOCAL_IP])
-        if not ER3PRO_ENABLE_GRIPPER:
+        # If using Python-side Jodell control, disable bridge-side gripper to avoid conflicts.
+        if (not ER3PRO_ENABLE_GRIPPER) or ER3PRO_GRIPPER_BACKEND == 'jodell_usb':
             cmd.append('--disable-gripper')
 
         self.proc = subprocess.Popen(
@@ -91,10 +175,18 @@ class ER3ProCppBridgeArm:
             bufsize=1,
         )
 
+        # Forward bridge stderr so hardware/RS485 warnings are visible to operators.
+        if self.proc.stderr is not None:
+            self.stderr_thread = threading.Thread(target=self._stderr_loop, daemon=True)
+            self.stderr_thread.start()
+
         ready = self._read_line(timeout=10.0)
         if ready != 'READY':
             err = self.proc.stderr.readline().strip() if self.proc.stderr else ''
             raise RuntimeError(f'Failed to start ER3Pro C++ bridge: {ready} {err}')
+
+        if ER3PRO_ENABLE_GRIPPER and ER3PRO_GRIPPER_BACKEND == 'jodell_usb':
+            self.usb_gripper = JodellUsbGripper()
 
     def _read_line(self, timeout=3.0):
         start = time.time()
@@ -107,6 +199,14 @@ class ER3ProCppBridgeArm:
             if line:
                 return line.strip()
         raise RuntimeError('Timeout waiting for ER3Pro C++ bridge response')
+
+    def _stderr_loop(self):
+        if self.proc.stderr is None:
+            return
+        for line in self.proc.stderr:
+            line = line.strip()
+            if line:
+                print(f'[arm_bridge] {line}', file=sys.stderr, flush=True)
 
     def _request(self, msg, timeout=3.0):
         if self.proc.stdin is None:
@@ -136,6 +236,9 @@ class ER3ProCppBridgeArm:
             timeout=8.0,
         )
 
+        if self.usb_gripper is not None:
+            self.usb_gripper.command(gripper_value)
+
     def get_state(self):
         rep = self._request('STATE', timeout=3.0)
         items = rep.split()
@@ -155,6 +258,8 @@ class ER3ProCppBridgeArm:
         }
 
     def close(self):
+        if self.usb_gripper is not None:
+            self.usb_gripper.close()
         try:
             self._request('CLOSE', timeout=2.0)
         except Exception:
