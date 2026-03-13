@@ -34,6 +34,7 @@ from constants import ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, ER3PRO_G
 from constants import ER3PRO_GRIPPER_USB_SPEED, ER3PRO_GRIPPER_USB_TORQUE
 from constants import ER3PRO_GRIPPER_USB_OPEN_POS, ER3PRO_GRIPPER_USB_CLOSE_POS
 from constants import ER3PRO_GRIPPER_USB_MIN_CMD_INTERVAL
+from constants import ER3PRO_GRIPPER_OBS_SOURCE, ER3PRO_GRIPPER_OBS_MAX_DEVIATION
 from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
@@ -119,6 +120,7 @@ class JodellUsbGripper:
 class ER3ProCppBridgeArm:
     def __init__(self):
         self.gripper_pos = np.array([1.0])
+        self.last_cmd_gripper_pos = 1.0
         self.usb_gripper = None
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
@@ -230,6 +232,8 @@ class ER3ProCppBridgeArm:
         arm_quat = np.asarray(action['arm_quat'], dtype=np.float64)
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
+        gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
+        self.last_cmd_gripper_pos = gripper_value
         self.gripper_pos[:] = gripper_value
         self._request(
             f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} {arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
@@ -248,7 +252,19 @@ class ER3ProCppBridgeArm:
         posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
         arm_pos = posture[:3]
         arm_quat = R.from_euler('xyz', posture[3:]).as_quat()
-        self.gripper_pos[:] = float(items[7])
+        reported_gripper = float(items[7])
+        if ER3PRO_GRIPPER_OBS_SOURCE == 'command':
+            gripper_for_obs = self.last_cmd_gripper_pos
+        elif ER3PRO_GRIPPER_OBS_SOURCE == 'state':
+            gripper_for_obs = reported_gripper
+        else:
+            # Hybrid mode: trust feedback when reasonable, otherwise fallback to command for stable datasets.
+            if 0.0 <= reported_gripper <= 1.0 and abs(reported_gripper - self.last_cmd_gripper_pos) <= ER3PRO_GRIPPER_OBS_MAX_DEVIATION:
+                gripper_for_obs = reported_gripper
+            else:
+                gripper_for_obs = self.last_cmd_gripper_pos
+
+        self.gripper_pos[:] = float(np.clip(gripper_for_obs, 0.0, 1.0))
         if arm_quat[3] < 0.0:
             np.negative(arm_quat, out=arm_quat)
         return {

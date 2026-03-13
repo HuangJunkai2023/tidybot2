@@ -72,6 +72,13 @@ ER3PRO_GRIPPER_RS485_CLOSE_POS = 255
 ER3PRO_GRIPPER_RS485_SPEED = 255
 ER3PRO_GRIPPER_RS485_TORQUE = 80
 
+# Gripper observation source for data recording:
+# - 'state': always trust hardware-reported state
+# - 'command': always use last commanded value
+# - 'hybrid': use state when close to command, else fallback to command
+ER3PRO_GRIPPER_OBS_SOURCE = 'command'
+ER3PRO_GRIPPER_OBS_MAX_DEVIATION = 0.25
+
 # USB-RS485 + Jodell Python SDK backend (uses src/jodell/python/JodellTool-0.1.5-py3-none-any.whl)
 ER3PRO_GRIPPER_USB_PORT = '/dev/ttyUSB0'
 ER3PRO_GRIPPER_USB_BAUD = 115200
