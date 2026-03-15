@@ -15,6 +15,11 @@ from flask_socketio import SocketIO, emit
 from scipy.spatial.transform import Rotation as R
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
 from constants import BASE_DIFF_DRIVE_MODE
+from constants import POLICY_CONTROL_PERIOD
+from constants import TELEOP_JUMP_GUARD_ENABLE
+from constants import TELEOP_MAX_BASE_LINEAR_SPEED, TELEOP_MAX_BASE_ANGULAR_SPEED
+from constants import TELEOP_MAX_ARM_LINEAR_SPEED, TELEOP_MAX_ARM_ANGULAR_SPEED
+from constants import TELEOP_MAX_GRIPPER_SPEED
 
 class Policy:
     def reset(self):
@@ -133,6 +138,37 @@ def convert_webxr_pose(pos, quat):
 
 TWO_PI = 2 * math.pi
 
+
+def _clip_vector_step(target, current, max_step):
+    delta = target - current
+    dist = float(np.linalg.norm(delta))
+    if dist <= max_step or dist < 1e-12:
+        return target
+    return current + delta * (max_step / dist)
+
+
+def _clip_scalar_step(target, current, max_step):
+    delta = float(target - current)
+    if abs(delta) <= max_step:
+        return float(target)
+    return float(current + math.copysign(max_step, delta))
+
+
+def _clip_angle_step(target, current, max_step):
+    delta = (target - current + math.pi) % TWO_PI - math.pi
+    if abs(delta) <= max_step:
+        return float(target)
+    return float(current + math.copysign(max_step, delta))
+
+
+def _clip_rotation_step(target_rot, current_rot, max_step):
+    delta_rotvec = (target_rot * current_rot.inv()).as_rotvec()
+    delta_norm = float(np.linalg.norm(delta_rotvec))
+    if delta_norm <= max_step or delta_norm < 1e-12:
+        return target_rot
+    limited_delta = delta_rotvec * (max_step / delta_norm)
+    return R.from_rotvec(limited_delta) * current_rot
+
 class TeleopController:
     def __init__(self):
         # Teleop device IDs
@@ -162,6 +198,12 @@ class TeleopController:
         self.arm_ref_rot = None
         self.arm_ref_base_pose = None  # For optional secondary control of base
         self.gripper_ref_pos = None
+
+        # Last sent command state (for jump protection).
+        self.base_cmd_pose = None
+        self.arm_cmd_pos = None
+        self.arm_cmd_rot = None
+        self.gripper_cmd_pos = None
 
     def process_message(self, data):
         if not self.targets_initialized:
@@ -260,21 +302,66 @@ class TeleopController:
             self.arm_target_pos = obs['arm_pos']
             self.arm_target_rot = R.from_quat(obs['arm_quat'])
             self.gripper_target_pos = obs['gripper_pos']
+
+            self.base_cmd_pose = obs['base_pose'].copy()
+            self.arm_cmd_pos = obs['arm_pos'].copy()
+            self.arm_cmd_rot = R.from_quat(obs['arm_quat'])
+            self.gripper_cmd_pos = obs['gripper_pos'].copy()
             self.targets_initialized = True
 
         # Return no action if teleop is not enabled
         if self.primary_device_id is None:
+            # Keep command state aligned with live robot state while teleop is idle.
+            self.base_target_pose = obs['base_pose']
+            self.arm_target_pos = obs['arm_pos']
+            self.arm_target_rot = R.from_quat(obs['arm_quat'])
+            self.gripper_target_pos = obs['gripper_pos']
+            self.base_cmd_pose = obs['base_pose'].copy()
+            self.arm_cmd_pos = obs['arm_pos'].copy()
+            self.arm_cmd_rot = R.from_quat(obs['arm_quat'])
+            self.gripper_cmd_pos = obs['gripper_pos'].copy()
             return None
 
+        assert self.base_target_pose is not None
+        assert self.arm_target_pos is not None
+        assert self.arm_target_rot is not None
+        assert self.gripper_target_pos is not None
+        assert self.base_cmd_pose is not None
+        assert self.arm_cmd_pos is not None
+        assert self.arm_cmd_rot is not None
+        assert self.gripper_cmd_pos is not None
+
+        # Slew-rate limiter to protect against occasional pose jumps during teleop.
+        if TELEOP_JUMP_GUARD_ENABLE:
+            dt = float(POLICY_CONTROL_PERIOD)
+
+            max_base_linear_step = TELEOP_MAX_BASE_LINEAR_SPEED * dt
+            max_base_angular_step = TELEOP_MAX_BASE_ANGULAR_SPEED * dt
+            max_arm_linear_step = TELEOP_MAX_ARM_LINEAR_SPEED * dt
+            max_arm_angular_step = TELEOP_MAX_ARM_ANGULAR_SPEED * dt
+            max_gripper_step = TELEOP_MAX_GRIPPER_SPEED * dt
+
+            self.base_cmd_pose[:2] = _clip_vector_step(self.base_target_pose[:2], self.base_cmd_pose[:2], max_base_linear_step)
+            self.base_cmd_pose[2] = _clip_angle_step(self.base_target_pose[2], self.base_cmd_pose[2], max_base_angular_step)
+
+            self.arm_cmd_pos = _clip_vector_step(self.arm_target_pos, self.arm_cmd_pos, max_arm_linear_step)
+            self.arm_cmd_rot = _clip_rotation_step(self.arm_target_rot, self.arm_cmd_rot, max_arm_angular_step)
+            self.gripper_cmd_pos[0] = _clip_scalar_step(self.gripper_target_pos[0], self.gripper_cmd_pos[0], max_gripper_step)
+        else:
+            self.base_cmd_pose = self.base_target_pose.copy()
+            self.arm_cmd_pos = self.arm_target_pos.copy()
+            self.arm_cmd_rot = self.arm_target_rot
+            self.gripper_cmd_pos = self.gripper_target_pos.copy()
+
         # Get most recent teleop command
-        arm_quat = self.arm_target_rot.as_quat()
+        arm_quat = self.arm_cmd_rot.as_quat(canonical=False)
         if arm_quat[3] < 0.0:  # Enforce quaternion uniqueness (Note: Not strictly necessary since policy training uses 6D rotation representation)
             np.negative(arm_quat, out=arm_quat)
         action = {
-            'base_pose': self.base_target_pose.copy(),
-            'arm_pos': self.arm_target_pos.copy(),
+            'base_pose': self.base_cmd_pose.copy(),
+            'arm_pos': self.arm_cmd_pos.copy(),
             'arm_quat': arm_quat,
-            'gripper_pos': self.gripper_target_pos.copy(),
+            'gripper_pos': self.gripper_cmd_pos.copy(),
         }
 
         return action
