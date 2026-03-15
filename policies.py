@@ -14,6 +14,7 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from scipy.spatial.transform import Rotation as R
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
+from constants import BASE_DIFF_DRIVE_MODE
 
 class Policy:
     def reset(self):
@@ -201,7 +202,15 @@ class TeleopController:
                     self.base_xr_ref_rot_inv = rot.inv()
 
                 # Position
-                self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
+                if BASE_DIFF_DRIVE_MODE:
+                    # Differential-drive base: map gesture translation to forward-only travel.
+                    delta = pos[:2] - self.base_xr_ref_pos
+                    ref_theta = self.base_ref_pose[2]
+                    fwd = np.array([math.cos(ref_theta), math.sin(ref_theta)], dtype=np.float64)
+                    forward_delta = float(delta @ fwd)
+                    self.base_target_pose[:2] = self.base_ref_pose[:2] + forward_delta * fwd
+                else:
+                    self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
 
                 # Orientation
                 base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])

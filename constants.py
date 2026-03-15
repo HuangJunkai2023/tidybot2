@@ -41,6 +41,7 @@ BASE_MAX_VEL_XY = 0.35      # m/s
 BASE_MAX_VEL_THETA = 1.20   # rad/s
 BASE_POS_KP_LINEAR = 1.60
 BASE_POS_KP_ANGULAR = 2.00
+BASE_DIFF_DRIVE_MODE = True  # True for two-wheel differential-drive base
 
 # ER3Pro arm
 ER3PRO_IP = '192.168.0.160'
@@ -78,6 +79,11 @@ ER3PRO_GRIPPER_RS485_TORQUE = 80
 # - 'hybrid': use state when close to command, else fallback to command
 ER3PRO_GRIPPER_OBS_SOURCE = 'command'
 ER3PRO_GRIPPER_OBS_MAX_DEVIATION = 0.25
+
+# Arm pose observation source for data recording (affects saved episodes only):
+# - 'state': save measured arm pose from hardware state
+# - 'command': save teleop commanded arm pose/quaternion
+ER3PRO_ARM_POSE_OBS_SOURCE = 'command'
 
 # USB-RS485 + Jodell Python SDK backend (uses src/jodell/python/JodellTool-0.1.5-py3-none-any.whl)
 ER3PRO_GRIPPER_USB_PORT = '/dev/ttyUSB0'

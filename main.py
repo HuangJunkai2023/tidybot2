@@ -4,9 +4,11 @@
 import argparse
 import time
 from itertools import count
+import numpy as np
 from constants import POLICY_CONTROL_PERIOD
 from constants import ENABLE_ARM
 from constants import ARM_BACKEND
+from constants import ER3PRO_ARM_POSE_OBS_SOURCE
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy
 
@@ -36,6 +38,18 @@ def should_save_episode(writer):
             print('Discarding episode')
             return False
         print('Invalid response')
+
+def _build_logged_observation(obs, action):
+    if not isinstance(action, dict):
+        return obs
+
+    logged_obs = dict(obs)
+    if ENABLE_ARM and ER3PRO_ARM_POSE_OBS_SOURCE == 'command':
+        # Save demonstration command for arm pose so dataset aligns with teleop intent.
+        logged_obs['arm_pos'] = np.asarray(action['arm_pos'], dtype=np.float64).copy()
+        logged_obs['arm_quat'] = np.asarray(action['arm_quat'], dtype=np.float64).copy()
+        logged_obs['gripper_pos'] = np.asarray(action['gripper_pos'], dtype=np.float64).copy()
+    return logged_obs
 
 def run_episode(env, policy, writer=None):
     # Reset the env
@@ -75,7 +89,7 @@ def run_episode(env, policy, writer=None):
 
             if writer is not None and not episode_ended:
                 # Record executed action
-                writer.step(obs, action)
+                writer.step(_build_logged_observation(obs, action), action)
 
         # Episode ended
         elif not episode_ended and action == 'end_episode':
