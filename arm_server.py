@@ -35,12 +35,15 @@ from constants import ER3PRO_GRIPPER_USB_SPEED, ER3PRO_GRIPPER_USB_TORQUE
 from constants import ER3PRO_GRIPPER_USB_OPEN_POS, ER3PRO_GRIPPER_USB_CLOSE_POS
 from constants import ER3PRO_GRIPPER_USB_MIN_CMD_INTERVAL
 from constants import ER3PRO_GRIPPER_OBS_SOURCE, ER3PRO_GRIPPER_OBS_MAX_DEVIATION
+from constants import ER3PRO_ARM_POSE_OBS_SOURCE
 from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
 from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
 from constants import ER3PRO_TCP_OFFSET_Z
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
+
+ER3PRO_STATE_POLL_PERIOD = 0.10
 
 
 def _check_jodell_runtime_deps():
@@ -122,6 +125,18 @@ class ER3ProCppBridgeArm:
         self.gripper_pos = np.array([1.0])
         self.last_cmd_gripper_pos = 1.0
         self.usb_gripper = None
+        self.io_lock = threading.Lock()
+        self.state_lock = threading.Lock()
+        self.worker_cv = threading.Condition()
+        self.worker_running = False
+        self.worker_paused = False
+        self.pending_action = None
+        self.last_state_error_time = 0.0
+        self.cmd_arm_pos = np.zeros(3, dtype=np.float64)
+        self.cmd_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+        self.measured_arm_pos = np.zeros(3, dtype=np.float64)
+        self.measured_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+        self.measured_gripper_pos = 1.0
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
         if not bridge_path.exists():
@@ -190,6 +205,11 @@ class ER3ProCppBridgeArm:
         if ER3PRO_ENABLE_GRIPPER and ER3PRO_GRIPPER_BACKEND == 'jodell_usb':
             self.usb_gripper = JodellUsbGripper()
 
+        self._refresh_state(timeout=3.0)
+        self.worker_running = True
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.worker_thread.start()
+
     def _read_line(self, timeout=3.0):
         start = time.time()
         while time.time() - start < timeout:
@@ -211,21 +231,113 @@ class ER3ProCppBridgeArm:
                 print(f'[arm_bridge] {line}', file=sys.stderr, flush=True)
 
     def _request(self, msg, timeout=3.0):
-        if self.proc.stdin is None:
-            raise RuntimeError('ER3Pro C++ bridge stdin not available')
-        self.proc.stdin.write(msg + '\n')
-        self.proc.stdin.flush()
-        rep = self._read_line(timeout=timeout)
-        if rep.startswith('ERR '):
-            raise RuntimeError(f'ER3Pro C++ bridge error: {rep[4:]}')
-        return rep
+        with self.io_lock:
+            if self.proc.stdin is None:
+                raise RuntimeError('ER3Pro C++ bridge stdin not available')
+            self.proc.stdin.write(msg + '\n')
+            self.proc.stdin.flush()
+            rep = self._read_line(timeout=timeout)
+            if rep.startswith('ERR '):
+                raise RuntimeError(f'ER3Pro C++ bridge error: {rep[4:]}')
+            return rep
+
+    def _parse_state_response(self, rep):
+        items = rep.split()
+        if len(items) != 8 or items[0] != 'STATE':
+            raise RuntimeError(f'Unexpected ER3Pro C++ bridge STATE response: {rep}')
+        posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
+        arm_pos = posture[:3]
+        arm_quat = R.from_euler('xyz', posture[3:]).as_quat()
+        if arm_quat[3] < 0.0:
+            np.negative(arm_quat, out=arm_quat)
+        reported_gripper = float(items[7])
+        return arm_pos, arm_quat, reported_gripper
+
+    def _refresh_state(self, timeout=3.0):
+        rep = self._request('STATE', timeout=timeout)
+        arm_pos, arm_quat, reported_gripper = self._parse_state_response(rep)
+        with self.state_lock:
+            self.measured_arm_pos = arm_pos
+            self.measured_arm_quat = arm_quat
+            self.measured_gripper_pos = reported_gripper
+            if ER3PRO_ARM_POSE_OBS_SOURCE != 'command':
+                self.cmd_arm_pos = arm_pos.copy()
+                self.cmd_arm_quat = arm_quat.copy()
+        return arm_pos, arm_quat, reported_gripper
+
+    def _set_worker_paused(self, paused):
+        with self.worker_cv:
+            self.worker_paused = paused
+            self.worker_cv.notify_all()
+
+    def _worker_loop(self):
+        next_state_poll = time.monotonic()
+        while True:
+            action = None
+            with self.worker_cv:
+                while self.worker_running and self.worker_paused:
+                    self.worker_cv.wait(timeout=0.05)
+                if not self.worker_running:
+                    return
+
+                now = time.monotonic()
+                wait_time = max(0.0, next_state_poll - now)
+                if self.pending_action is None and wait_time > 0.0:
+                    self.worker_cv.wait(timeout=wait_time)
+                    continue
+                action = self.pending_action
+                self.pending_action = None
+
+            if action is not None:
+                try:
+                    arm_pos, arm_quat, gripper_value = action
+                    self._request(
+                        f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
+                        f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
+                        timeout=8.0,
+                    )
+                    if self.usb_gripper is not None:
+                        self.usb_gripper.command(gripper_value)
+                except Exception as e:
+                    print(f'[arm_bridge] async EXEC failed: {e}', file=sys.stderr, flush=True)
+
+            now = time.monotonic()
+            if now >= next_state_poll:
+                try:
+                    self._refresh_state(timeout=1.0)
+                except Exception as e:
+                    if now - self.last_state_error_time > 2.0:
+                        print(f'[arm_bridge] async STATE failed: {e}', file=sys.stderr, flush=True)
+                        self.last_state_error_time = now
+                next_state_poll = now + ER3PRO_STATE_POLL_PERIOD
 
     def reset(self):
-        self._request('RESET', timeout=8.0)
-        self.gripper_pos[:] = 1.0
+        self._set_worker_paused(True)
+        try:
+            self._request('RESET', timeout=8.0)
+            self.gripper_pos[:] = 1.0
+            self.last_cmd_gripper_pos = 1.0
+            arm_pos, arm_quat, reported_gripper = self._refresh_state(timeout=3.0)
+            with self.state_lock:
+                self.cmd_arm_pos = arm_pos.copy()
+                self.cmd_arm_quat = arm_quat.copy()
+                self.measured_gripper_pos = reported_gripper
+                self.pending_action = None
+        finally:
+            self._set_worker_paused(False)
 
     def move_to_teleop_preset(self):
-        self._request('PRESET', timeout=8.0)
+        self._set_worker_paused(True)
+        try:
+            self._request('PRESET', timeout=8.0)
+            arm_pos, arm_quat, reported_gripper = self._refresh_state(timeout=3.0)
+            with self.state_lock:
+                self.cmd_arm_pos = arm_pos.copy()
+                self.cmd_arm_quat = arm_quat.copy()
+                self.measured_gripper_pos = reported_gripper
+                self.pending_action = None
+        finally:
+            self._set_worker_paused(False)
 
     def execute_action(self, action):
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
@@ -233,36 +345,35 @@ class ER3ProCppBridgeArm:
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
-        self.last_cmd_gripper_pos = gripper_value
-        self.gripper_pos[:] = gripper_value
-        self._request(
-            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} {arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
-            timeout=8.0,
-        )
-
-        if self.usb_gripper is not None:
-            self.usb_gripper.command(gripper_value)
+        with self.state_lock:
+            self.last_cmd_gripper_pos = gripper_value
+            self.gripper_pos[:] = gripper_value
+            self.cmd_arm_pos = arm_pos.copy()
+            self.cmd_arm_quat = arm_quat.copy()
+        with self.worker_cv:
+            self.pending_action = (arm_pos.copy(), arm_quat.copy(), gripper_value)
+            self.worker_cv.notify()
 
     def get_state(self):
-        rep = self._request('STATE', timeout=3.0)
-        items = rep.split()
-        if len(items) != 8 or items[0] != 'STATE':
-            raise RuntimeError(f'Unexpected ER3Pro C++ bridge STATE response: {rep}')
-
-        posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
-        arm_pos = posture[:3]
-        arm_quat = R.from_euler('xyz', posture[3:]).as_quat()
-        reported_gripper = float(items[7])
+        with self.state_lock:
+            if ER3PRO_ARM_POSE_OBS_SOURCE == 'command':
+                arm_pos = self.cmd_arm_pos.copy()
+                arm_quat = self.cmd_arm_quat.copy()
+            else:
+                arm_pos = self.measured_arm_pos.copy()
+                arm_quat = self.measured_arm_quat.copy()
+            reported_gripper = self.measured_gripper_pos
+            last_cmd_gripper_pos = self.last_cmd_gripper_pos
         if ER3PRO_GRIPPER_OBS_SOURCE == 'command':
-            gripper_for_obs = self.last_cmd_gripper_pos
+            gripper_for_obs = last_cmd_gripper_pos
         elif ER3PRO_GRIPPER_OBS_SOURCE == 'state':
             gripper_for_obs = reported_gripper
         else:
             # Hybrid mode: trust feedback when reasonable, otherwise fallback to command for stable datasets.
-            if 0.0 <= reported_gripper <= 1.0 and abs(reported_gripper - self.last_cmd_gripper_pos) <= ER3PRO_GRIPPER_OBS_MAX_DEVIATION:
+            if 0.0 <= reported_gripper <= 1.0 and abs(reported_gripper - last_cmd_gripper_pos) <= ER3PRO_GRIPPER_OBS_MAX_DEVIATION:
                 gripper_for_obs = reported_gripper
             else:
-                gripper_for_obs = self.last_cmd_gripper_pos
+                gripper_for_obs = last_cmd_gripper_pos
 
         self.gripper_pos[:] = float(np.clip(gripper_for_obs, 0.0, 1.0))
         if arm_quat[3] < 0.0:
@@ -274,6 +385,11 @@ class ER3ProCppBridgeArm:
         }
 
     def close(self):
+        with self.worker_cv:
+            self.worker_running = False
+            self.worker_cv.notify_all()
+        if hasattr(self, 'worker_thread'):
+            self.worker_thread.join(timeout=1.0)
         if self.usb_gripper is not None:
             self.usb_gripper.close()
         try:
