@@ -21,6 +21,8 @@ from constants import TELEOP_MAX_BASE_LINEAR_SPEED, TELEOP_MAX_BASE_ANGULAR_SPEE
 from constants import TELEOP_MAX_ARM_LINEAR_SPEED, TELEOP_MAX_ARM_ANGULAR_SPEED
 from constants import TELEOP_MAX_GRIPPER_SPEED
 
+POLICY_SOCKET_TIMEOUT_MS = 1000
+
 class Policy:
     def reset(self):
         raise NotImplementedError
@@ -436,24 +438,32 @@ class RemotePolicy(TeleopPolicy):
         self.enabled = False
 
         # Connection to policy server
-        context = zmq.Context()
-        self.socket = context.socket(zmq.REQ)
+        self.context = zmq.Context()
+        self.socket = None
+        self._connect_socket()
+
+    def _connect_socket(self):
+        if self.socket is not None:
+            self.socket.close(linger=0)
+        self.socket = self.context.socket(zmq.REQ)
+        self.socket.setsockopt(zmq.RCVTIMEO, POLICY_SOCKET_TIMEOUT_MS)
+        self.socket.setsockopt(zmq.SNDTIMEO, POLICY_SOCKET_TIMEOUT_MS)
         self.socket.connect(f'tcp://{POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
         print(f'Connected to policy server at {POLICY_SERVER_HOST}:{POLICY_SERVER_PORT}')
 
     def reset(self):
+        self.enabled = False
+
         # Wait for user to signal that episode has started
         super().reset()  # Note: Comment out to run without phone
 
         # Check connection to policy server and reset policy
-        default_timeout = self.socket.getsockopt(zmq.RCVTIMEO)
-        self.socket.setsockopt(zmq.RCVTIMEO, 1000)  # Temporarily set 1000 ms timeout
-        self.socket.send_pyobj({'reset': True})
         try:
+            self.socket.send_pyobj({'reset': True})
             self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        except zmq.error.Again as e:
+        except (zmq.error.Again, zmq.error.ZMQError) as e:
+            self._connect_socket()
             raise Exception('Could not communicate with policy server') from e
-        self.socket.setsockopt(zmq.RCVTIMEO, default_timeout)  # Put default timeout back
 
         # Enable policy execution immediately
         self.enabled = True
@@ -474,19 +484,25 @@ class RemotePolicy(TeleopPolicy):
                 # Resize image to resolution expected by policy server
                 v = cv.resize(v, (POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT))
 
-                # Encode image as JPEG
-                _, v = cv.imencode('.jpg', v)  # Note: Interprets RGB as BGR
+                # OpenCV expects BGR input while our observation pipeline uses RGB.
+                ok, v = cv.imencode('.jpg', cv.cvtColor(v, cv.COLOR_RGB2BGR))
+                if not ok:
+                    raise RuntimeError(f'Failed to encode image for key: {k}')
                 encoded_obs[k] = v
             else:
                 encoded_obs[k] = v
 
         # Send obs to policy server
         req = {'obs': encoded_obs}
-        self.socket.send_pyobj(req)
-
-        # Get action from policy server
-        rep = self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
-        action = rep['action']
+        try:
+            self.socket.send_pyobj(req)
+            rep = self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
+        except (zmq.error.Again, zmq.error.ZMQError):
+            print('Warning: Lost communication with policy server, pausing policy execution until next reset.')
+            self.enabled = False
+            self._connect_socket()
+            return None
+        action = rep.get('action')
 
         return action
 

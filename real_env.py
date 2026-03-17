@@ -1,6 +1,7 @@
 # Author: Jimmy Wu
 # Date: October 2024
 
+import time
 import numpy as np
 from cameras import KinovaCamera, LogitechCamera, UVCCamera, DummyCamera
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
@@ -41,6 +42,8 @@ class RealEnv:
             if USE_KINOVA_WRIST_CAMERA
             else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=WRIST_CAMERA_WIDTH, frame_height=WRIST_CAMERA_HEIGHT)
         )
+        self._camera_warning_times = {}
+        self._wait_for_initial_frames()
 
     def _create_base_camera(self, camera_hint):
         hint = str(camera_hint).strip()
@@ -53,6 +56,33 @@ class RealEnv:
 
         # Otherwise treat it as Logitech C930e serial suffix.
         return LogitechCamera(hint, frame_width=BASE_CAMERA_WIDTH, frame_height=BASE_CAMERA_HEIGHT)
+
+    def _warn_camera_once_per_interval(self, name, interval=2.0):
+        now = time.monotonic()
+        last = self._camera_warning_times.get(name, 0.0)
+        if now - last >= interval:
+            print(f'Warning: {name} camera frame not ready, using a blank image temporarily.')
+            self._camera_warning_times[name] = now
+
+    def _get_camera_image(self, camera, frame_width, frame_height, name):
+        image = camera.get_image()
+        if image is None:
+            self._warn_camera_once_per_interval(name)
+            return np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+        return image
+
+    def _wait_for_initial_frames(self, timeout=3.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            base_ready = self.base_camera.get_image() is not None
+            wrist_ready = self.wrist_camera.get_image() is not None
+            if base_ready and wrist_ready:
+                return
+            time.sleep(0.05)
+        if self.base_camera.get_image() is None:
+            self._warn_camera_once_per_interval('base')
+        if self.wrist_camera.get_image() is None:
+            self._warn_camera_once_per_interval('wrist')
 
     def get_obs(self):
         obs = {}
@@ -68,8 +98,8 @@ class RealEnv:
             obs['arm_quat'] = np.array([0.0, 0.0, 0.0, 1.0])
             obs['gripper_pos'] = np.array([1.0])
 
-        obs['base_image'] = self.base_camera.get_image()
-        obs['wrist_image'] = self.wrist_camera.get_image()
+        obs['base_image'] = self._get_camera_image(self.base_camera, BASE_CAMERA_WIDTH, BASE_CAMERA_HEIGHT, 'base')
+        obs['wrist_image'] = self._get_camera_image(self.wrist_camera, WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT, 'wrist')
         return obs
 
     def reset(self):

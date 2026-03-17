@@ -15,10 +15,10 @@ import hydra
 import numpy as np
 import torch
 import zmq
+from constants import POLICY_CONTROL_PERIOD
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 
-POLICY_CONTROL_PERIOD = 0.1  # 100 ms (10 Hz)
 LATENCY_BUDGET = 0.2  # 200 ms including policy inference and communication
 LATENCY_STEPS = math.ceil(LATENCY_BUDGET / POLICY_CONTROL_PERIOD)  # Up to 3 is okay, 4 is too high
 
@@ -172,9 +172,10 @@ class PolicyServer:
         # Decode images
         for k, v in obs.items():
             if k.endswith('image'):
-                v = cv.imdecode(v, cv.IMREAD_COLOR)  # Note: Interprets RGB as BGR
-                # cv.imwrite(f'{k}.jpg', cv.cvtColor(v, cv.COLOR_RGB2BGR))
-                obs[k] = v
+                bgr = cv.imdecode(v, cv.IMREAD_COLOR)
+                if bgr is None:
+                    raise RuntimeError(f'Failed to decode image for key: {k}')
+                obs[k] = cv.cvtColor(bgr, cv.COLOR_BGR2RGB)
 
         # Get action
         action = self.policy.step(obs)
