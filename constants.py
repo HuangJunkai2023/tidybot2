@@ -126,7 +126,7 @@ WRIST_CAMERA_HEIGHT = 720
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST = '10.100.165.131' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST = '192.168.1.101' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 20
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ

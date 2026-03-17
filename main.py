@@ -12,6 +12,8 @@ from constants import ER3PRO_ARM_POSE_OBS_SOURCE
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy
 
+PROFILE_INTERVAL = 2.0
+
 
 def move_arm_to_teleop_preset(env):
     if not ENABLE_ARM or ARM_BACKEND != 'er3pro':
@@ -52,6 +54,57 @@ def _build_logged_observation(obs, action):
     return logged_obs
 
 def run_episode(env, policy, writer=None):
+    profile = {
+        'last_time': time.time(),
+        'step_count': 0,
+        'get_obs_total_ms': 0.0,
+        'get_obs_max_ms': 0.0,
+        'policy_total_ms': 0.0,
+        'policy_max_ms': 0.0,
+        'env_step_total_ms': 0.0,
+        'env_step_max_ms': 0.0,
+        'loop_total_ms': 0.0,
+        'loop_max_ms': 0.0,
+    }
+
+    def update_profile(get_obs_ms, policy_ms, env_step_ms, loop_ms):
+        profile['step_count'] += 1
+        profile['get_obs_total_ms'] += get_obs_ms
+        profile['get_obs_max_ms'] = max(profile['get_obs_max_ms'], get_obs_ms)
+        profile['policy_total_ms'] += policy_ms
+        profile['policy_max_ms'] = max(profile['policy_max_ms'], policy_ms)
+        profile['env_step_total_ms'] += env_step_ms
+        profile['env_step_max_ms'] = max(profile['env_step_max_ms'], env_step_ms)
+        profile['loop_total_ms'] += loop_ms
+        profile['loop_max_ms'] = max(profile['loop_max_ms'], loop_ms)
+
+    def maybe_print_profile():
+        now = time.time()
+        dt = now - profile['last_time']
+        if dt < PROFILE_INTERVAL or profile['step_count'] == 0:
+            return
+        step_count = profile['step_count']
+        loop_hz = step_count / dt
+        print(
+            f'[main_loop] hz={loop_hz:.1f} '
+            f'avg_get_obs_ms={profile["get_obs_total_ms"] / step_count:.1f} max_get_obs_ms={profile["get_obs_max_ms"]:.1f} '
+            f'avg_policy_ms={profile["policy_total_ms"] / step_count:.1f} max_policy_ms={profile["policy_max_ms"]:.1f} '
+            f'avg_env_step_ms={profile["env_step_total_ms"] / step_count:.1f} max_env_step_ms={profile["env_step_max_ms"]:.1f} '
+            f'avg_loop_ms={profile["loop_total_ms"] / step_count:.1f} max_loop_ms={profile["loop_max_ms"]:.1f}'
+        )
+        profile.update({
+            'last_time': now,
+            'step_count': 0,
+            'get_obs_total_ms': 0.0,
+            'get_obs_max_ms': 0.0,
+            'policy_total_ms': 0.0,
+            'policy_max_ms': 0.0,
+            'env_step_total_ms': 0.0,
+            'env_step_max_ms': 0.0,
+            'loop_total_ms': 0.0,
+            'loop_max_ms': 0.0,
+        })
+
     # Reset the env
     print('Resetting env...')
     env.reset()
@@ -67,25 +120,41 @@ def run_episode(env, policy, writer=None):
 
     episode_ended = False
     start_time = time.time()
+    profile['last_time'] = start_time
     for step_idx in count():
+        loop_start_time = time.time()
+
         # Enforce desired control freq
         step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
         while time.time() < step_end_time:
             time.sleep(0.0001)
 
         # Get latest observation
+        get_obs_start = time.time()
         obs = env.get_obs()
+        get_obs_ms = 1000.0 * (time.time() - get_obs_start)
 
         # Get action
+        policy_start = time.time()
         action = policy.step(obs)
+        policy_ms = 1000.0 * (time.time() - policy_start)
 
         # No action if teleop not enabled
         if action is None:
+            update_profile(
+                get_obs_ms,
+                policy_ms,
+                0.0,
+                1000.0 * (time.time() - loop_start_time),
+            )
+            maybe_print_profile()
             continue
 
         # Execute valid action on robot
         if isinstance(action, dict):
+            env_step_start = time.time()
             env.step(action)
+            env_step_ms = 1000.0 * (time.time() - env_step_start)
 
             if writer is not None and not episode_ended:
                 # Record executed action
@@ -105,6 +174,14 @@ def run_episode(env, policy, writer=None):
         # Ready for env reset
         elif action == 'reset_env':
             break
+
+        update_profile(
+            get_obs_ms,
+            policy_ms,
+            env_step_ms if isinstance(action, dict) else 0.0,
+            1000.0 * (time.time() - loop_start_time),
+        )
+        maybe_print_profile()
 
     if writer is not None:
         # Wait for writer to finish saving to disk
