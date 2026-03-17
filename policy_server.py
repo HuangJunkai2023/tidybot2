@@ -19,7 +19,7 @@ from constants import POLICY_CONTROL_PERIOD
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 
-LATENCY_BUDGET = 0.1  # 200 ms including policy inference and communication
+LATENCY_BUDGET = 0.2  # 200 ms including policy inference and communication
 LATENCY_STEPS = math.ceil(LATENCY_BUDGET / POLICY_CONTROL_PERIOD)  # Up to 3 is okay, 4 is too high
 PROFILE_INTERVAL = 2.0
 
