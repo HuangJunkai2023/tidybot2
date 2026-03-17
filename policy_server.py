@@ -19,8 +19,9 @@ from constants import POLICY_CONTROL_PERIOD
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 
-LATENCY_BUDGET = 0.2  # 200 ms including policy inference and communication
+LATENCY_BUDGET = 0.1  # 200 ms including policy inference and communication
 LATENCY_STEPS = math.ceil(LATENCY_BUDGET / POLICY_CONTROL_PERIOD)  # Up to 3 is okay, 4 is too high
+PROFILE_INTERVAL = 2.0
 
 class StubDiffusionPolicy:
     def reset(self):
@@ -56,6 +57,10 @@ class DiffusionPolicy:
         self.obs_shape_meta = cfg.shape_meta['obs']
         self.rotation_transformer = RotationTransformer(from_rep='rotation_6d', to_rep='quaternion')
         self.warmed_up = False
+        self.profile_last_time = time.time()
+        self.profile_infer_count = 0
+        self.profile_infer_total_ms = 0.0
+        self.profile_infer_max_ms = 0.0
 
     def reset(self):
         self.policy.reset()
@@ -67,13 +72,32 @@ class DiffusionPolicy:
                 print('Warming up policy...')
                 self.policy.predict_action(obs_dict)
                 self.warmed_up = True
-            # start_time = time.time()
+            start_time = time.time()
             result = self.policy.predict_action(obs_dict)
-            # elapsed_time = time.time() - start_time
-            # print(f'Inference time: {1000 * elapsed_time:.1f} ms')  # 115 ms (RTX 4080 Laptop)
+            elapsed_ms = 1000.0 * (time.time() - start_time)
+            self.profile_infer_count += 1
+            self.profile_infer_total_ms += elapsed_ms
+            self.profile_infer_max_ms = max(self.profile_infer_max_ms, elapsed_ms)
+            self._maybe_print_profile()
             action = result['action'][0].detach().to('cpu').numpy()
         act_sequence = self._convert_action(action)
         return act_sequence
+
+    def _maybe_print_profile(self):
+        now = time.time()
+        dt = now - self.profile_last_time
+        if dt < PROFILE_INTERVAL or self.profile_infer_count == 0:
+            return
+        avg_ms = self.profile_infer_total_ms / self.profile_infer_count
+        infer_hz = self.profile_infer_count / dt
+        print(
+            f'[policy_server] infer_hz={infer_hz:.1f} '
+            f'avg_infer_ms={avg_ms:.1f} max_infer_ms={self.profile_infer_max_ms:.1f}'
+        )
+        self.profile_last_time = now
+        self.profile_infer_count = 0
+        self.profile_infer_total_ms = 0.0
+        self.profile_infer_max_ms = 0.0
 
     def _convert_obs(self, obs_sequence):
         obs_dict_np = {}
@@ -108,6 +132,10 @@ class PolicyWrapper:
         self.n_action_steps = n_action_steps
         self.obs_queue = queue.Queue()
         self.act_queue = queue.Queue()
+        self.profile_last_time = time.time()
+        self.profile_infer_trigger_count = 0
+        self.profile_idle_count = 0
+        self.profile_backlog_count = 0
 
         # Start inference loop
         threading.Thread(target=self.inference_loop, args=(policy,), daemon=True).start()
@@ -120,6 +148,7 @@ class PolicyWrapper:
         action = None if self.act_queue.empty() else self.act_queue.get()
         if action is None:
             print('Warning: Unexpected idle action queue. Is the latency budget set too low?')
+            self.profile_idle_count += 1
         return action
 
     def inference_loop(self, policy):
@@ -143,10 +172,12 @@ class PolicyWrapper:
                 obs_history.append(obs)
 
             if self.act_queue.qsize() < LATENCY_STEPS and len(obs_history) == self.n_obs_steps:
+                self.profile_infer_trigger_count += 1
                 obs_sequence = list(obs_history)
                 act_sequence = policy.step(obs_sequence)
                 if not self.act_queue.empty():
                     print('Warning: Unexpected action queue backlog. Is the latency budget set too high?')
+                    self.profile_backlog_count += 1
                 if start_of_episode:
                     act_sequence = act_sequence[:self.n_action_steps - LATENCY_STEPS]
                     start_of_episode = False
@@ -155,7 +186,23 @@ class PolicyWrapper:
                 for action in act_sequence:
                     self.act_queue.put(action)
 
+            self._maybe_print_profile()
             time.sleep(0.001)
+
+    def _maybe_print_profile(self):
+        now = time.time()
+        dt = now - self.profile_last_time
+        if dt < PROFILE_INTERVAL:
+            return
+        infer_trigger_hz = self.profile_infer_trigger_count / dt
+        print(
+            f'[policy_queue] trigger_hz={infer_trigger_hz:.1f} '
+            f'queue={self.act_queue.qsize()} idle={self.profile_idle_count} backlog={self.profile_backlog_count}'
+        )
+        self.profile_last_time = now
+        self.profile_infer_trigger_count = 0
+        self.profile_idle_count = 0
+        self.profile_backlog_count = 0
 
 class PolicyServer:
     def __init__(self, policy):

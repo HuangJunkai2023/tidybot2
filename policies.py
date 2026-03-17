@@ -22,6 +22,7 @@ from constants import TELEOP_MAX_ARM_LINEAR_SPEED, TELEOP_MAX_ARM_ANGULAR_SPEED
 from constants import TELEOP_MAX_GRIPPER_SPEED
 
 POLICY_SOCKET_TIMEOUT_MS = 1000
+POLICY_PROFILE_INTERVAL = 2.0
 
 class Policy:
     def reset(self):
@@ -440,6 +441,12 @@ class RemotePolicy(TeleopPolicy):
         # Connection to policy server
         self.context = zmq.Context()
         self.socket = None
+        self.profile_last_time = time.time()
+        self.profile_step_count = 0
+        self.profile_rtt_total_ms = 0.0
+        self.profile_rtt_max_ms = 0.0
+        self.profile_encode_total_ms = 0.0
+        self.profile_encode_max_ms = 0.0
         self._connect_socket()
 
     def _connect_socket(self):
@@ -479,6 +486,7 @@ class RemotePolicy(TeleopPolicy):
 
         # Encode images
         encoded_obs = {}
+        encode_start = time.time()
         for k, v in obs.items():
             if v.ndim == 3:
                 # Resize image to resolution expected by policy server
@@ -491,20 +499,49 @@ class RemotePolicy(TeleopPolicy):
                 encoded_obs[k] = v
             else:
                 encoded_obs[k] = v
+        encode_ms = 1000.0 * (time.time() - encode_start)
 
         # Send obs to policy server
         req = {'obs': encoded_obs}
         try:
+            request_start = time.time()
             self.socket.send_pyobj(req)
             rep = self.socket.recv_pyobj()  # Note: Not secure. Only unpickle data you trust.
+            rtt_ms = 1000.0 * (time.time() - request_start)
         except (zmq.error.Again, zmq.error.ZMQError):
             print('Warning: Lost communication with policy server, pausing policy execution until next reset.')
             self.enabled = False
             self._connect_socket()
             return None
         action = rep.get('action')
+        self.profile_step_count += 1
+        self.profile_rtt_total_ms += rtt_ms
+        self.profile_rtt_max_ms = max(self.profile_rtt_max_ms, rtt_ms)
+        self.profile_encode_total_ms += encode_ms
+        self.profile_encode_max_ms = max(self.profile_encode_max_ms, encode_ms)
+        self._maybe_print_profile()
 
         return action
+
+    def _maybe_print_profile(self):
+        now = time.time()
+        dt = now - self.profile_last_time
+        if dt < POLICY_PROFILE_INTERVAL or self.profile_step_count == 0:
+            return
+        loop_hz = self.profile_step_count / dt
+        avg_rtt_ms = self.profile_rtt_total_ms / self.profile_step_count
+        avg_encode_ms = self.profile_encode_total_ms / self.profile_step_count
+        print(
+            f'[remote_policy] req_hz={loop_hz:.1f} '
+            f'avg_rtt_ms={avg_rtt_ms:.1f} max_rtt_ms={self.profile_rtt_max_ms:.1f} '
+            f'avg_encode_ms={avg_encode_ms:.1f} max_encode_ms={self.profile_encode_max_ms:.1f}'
+        )
+        self.profile_last_time = now
+        self.profile_step_count = 0
+        self.profile_rtt_total_ms = 0.0
+        self.profile_rtt_max_ms = 0.0
+        self.profile_encode_total_ms = 0.0
+        self.profile_encode_max_ms = 0.0
 
     def _process_message(self, data):
         if self.episode_ended:
