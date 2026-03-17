@@ -15,6 +15,16 @@ class RealEnv:
     def __init__(self):
         self.base = None
         self.arm = None
+        self.last_obs_timing_ms = {
+            'base_state': 0.0,
+            'arm_state': 0.0,
+            'base_image': 0.0,
+            'wrist_image': 0.0,
+        }
+        self.last_step_timing_ms = {
+            'base_action': 0.0,
+            'arm_action': 0.0,
+        }
 
         if ENABLE_BASE:
             base_manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTHKEY)
@@ -87,19 +97,29 @@ class RealEnv:
     def get_obs(self):
         obs = {}
         if self.base is not None:
+            t0 = time.time()
             obs.update(self.base.get_state())
+            self.last_obs_timing_ms['base_state'] = 1000.0 * (time.time() - t0)
         else:
             obs['base_pose'] = np.zeros(3)
+            self.last_obs_timing_ms['base_state'] = 0.0
 
         if self.arm is not None:
+            t0 = time.time()
             obs.update(self.arm.get_state())
+            self.last_obs_timing_ms['arm_state'] = 1000.0 * (time.time() - t0)
         else:
             obs['arm_pos'] = np.zeros(3)
             obs['arm_quat'] = np.array([0.0, 0.0, 0.0, 1.0])
             obs['gripper_pos'] = np.array([1.0])
+            self.last_obs_timing_ms['arm_state'] = 0.0
 
+        t0 = time.time()
         obs['base_image'] = self._get_camera_image(self.base_camera, BASE_CAMERA_WIDTH, BASE_CAMERA_HEIGHT, 'base')
+        self.last_obs_timing_ms['base_image'] = 1000.0 * (time.time() - t0)
+        t0 = time.time()
         obs['wrist_image'] = self._get_camera_image(self.wrist_camera, WRIST_CAMERA_WIDTH, WRIST_CAMERA_HEIGHT, 'wrist')
+        self.last_obs_timing_ms['wrist_image'] = 1000.0 * (time.time() - t0)
         return obs
 
     def reset(self):
@@ -116,9 +136,17 @@ class RealEnv:
     def step(self, action):
         # Note: We intentionally do not return obs here to prevent the policy from using outdated data
         if self.base is not None:
+            t0 = time.time()
             self.base.execute_action(action)  # Non-blocking
+            self.last_step_timing_ms['base_action'] = 1000.0 * (time.time() - t0)
+        else:
+            self.last_step_timing_ms['base_action'] = 0.0
         if self.arm is not None:
+            t0 = time.time()
             self.arm.execute_action(action)   # Non-blocking
+            self.last_step_timing_ms['arm_action'] = 1000.0 * (time.time() - t0)
+        else:
+            self.last_step_timing_ms['arm_action'] = 0.0
 
     def close(self):
         if self.base is not None:

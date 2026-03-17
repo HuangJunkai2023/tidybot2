@@ -65,9 +65,23 @@ def run_episode(env, policy, writer=None):
         'env_step_max_ms': 0.0,
         'loop_total_ms': 0.0,
         'loop_max_ms': 0.0,
+        'base_state_total_ms': 0.0,
+        'base_state_max_ms': 0.0,
+        'arm_state_total_ms': 0.0,
+        'arm_state_max_ms': 0.0,
+        'base_image_total_ms': 0.0,
+        'base_image_max_ms': 0.0,
+        'wrist_image_total_ms': 0.0,
+        'wrist_image_max_ms': 0.0,
+        'base_action_total_ms': 0.0,
+        'base_action_max_ms': 0.0,
+        'arm_action_total_ms': 0.0,
+        'arm_action_max_ms': 0.0,
     }
 
     def update_profile(get_obs_ms, policy_ms, env_step_ms, loop_ms):
+        obs_timing = getattr(env, 'last_obs_timing_ms', {})
+        step_timing = getattr(env, 'last_step_timing_ms', {})
         profile['step_count'] += 1
         profile['get_obs_total_ms'] += get_obs_ms
         profile['get_obs_max_ms'] = max(profile['get_obs_max_ms'], get_obs_ms)
@@ -77,6 +91,14 @@ def run_episode(env, policy, writer=None):
         profile['env_step_max_ms'] = max(profile['env_step_max_ms'], env_step_ms)
         profile['loop_total_ms'] += loop_ms
         profile['loop_max_ms'] = max(profile['loop_max_ms'], loop_ms)
+        for key in ('base_state', 'arm_state', 'base_image', 'wrist_image'):
+            value = float(obs_timing.get(key, 0.0))
+            profile[f'{key}_total_ms'] += value
+            profile[f'{key}_max_ms'] = max(profile[f'{key}_max_ms'], value)
+        for key in ('base_action', 'arm_action'):
+            value = float(step_timing.get(key, 0.0))
+            profile[f'{key}_total_ms'] += value
+            profile[f'{key}_max_ms'] = max(profile[f'{key}_max_ms'], value)
 
     def maybe_print_profile():
         now = time.time()
@@ -90,7 +112,13 @@ def run_episode(env, policy, writer=None):
             f'avg_get_obs_ms={profile["get_obs_total_ms"] / step_count:.1f} max_get_obs_ms={profile["get_obs_max_ms"]:.1f} '
             f'avg_policy_ms={profile["policy_total_ms"] / step_count:.1f} max_policy_ms={profile["policy_max_ms"]:.1f} '
             f'avg_env_step_ms={profile["env_step_total_ms"] / step_count:.1f} max_env_step_ms={profile["env_step_max_ms"]:.1f} '
-            f'avg_loop_ms={profile["loop_total_ms"] / step_count:.1f} max_loop_ms={profile["loop_max_ms"]:.1f}'
+            f'avg_loop_ms={profile["loop_total_ms"] / step_count:.1f} max_loop_ms={profile["loop_max_ms"]:.1f} '
+            f'avg_base_state_ms={profile["base_state_total_ms"] / step_count:.1f} '
+            f'avg_arm_state_ms={profile["arm_state_total_ms"] / step_count:.1f} '
+            f'avg_base_image_ms={profile["base_image_total_ms"] / step_count:.1f} '
+            f'avg_wrist_image_ms={profile["wrist_image_total_ms"] / step_count:.1f} '
+            f'avg_base_action_ms={profile["base_action_total_ms"] / step_count:.1f} '
+            f'avg_arm_action_ms={profile["arm_action_total_ms"] / step_count:.1f}'
         )
         profile.update({
             'last_time': now,
@@ -103,6 +131,18 @@ def run_episode(env, policy, writer=None):
             'env_step_max_ms': 0.0,
             'loop_total_ms': 0.0,
             'loop_max_ms': 0.0,
+            'base_state_total_ms': 0.0,
+            'base_state_max_ms': 0.0,
+            'arm_state_total_ms': 0.0,
+            'arm_state_max_ms': 0.0,
+            'base_image_total_ms': 0.0,
+            'base_image_max_ms': 0.0,
+            'wrist_image_total_ms': 0.0,
+            'wrist_image_max_ms': 0.0,
+            'base_action_total_ms': 0.0,
+            'base_action_max_ms': 0.0,
+            'arm_action_total_ms': 0.0,
+            'arm_action_max_ms': 0.0,
         })
 
     # Reset the env
