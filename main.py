@@ -13,6 +13,7 @@ from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy
 
 PROFILE_INTERVAL = 2.0
+ENABLE_MAIN_LOOP_PROFILE = False
 
 
 def move_arm_to_teleop_preset(env):
@@ -101,6 +102,8 @@ def run_episode(env, policy, writer=None):
             profile[f'{key}_max_ms'] = max(profile[f'{key}_max_ms'], value)
 
     def maybe_print_profile():
+        if not ENABLE_MAIN_LOOP_PROFILE:
+            return
         now = time.time()
         dt = now - profile['last_time']
         if dt < PROFILE_INTERVAL or profile['step_count'] == 0:
