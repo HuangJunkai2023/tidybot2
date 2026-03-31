@@ -20,6 +20,8 @@ from constants import TELEOP_JUMP_GUARD_ENABLE
 from constants import TELEOP_MAX_BASE_LINEAR_SPEED, TELEOP_MAX_BASE_ANGULAR_SPEED
 from constants import TELEOP_MAX_ARM_LINEAR_SPEED, TELEOP_MAX_ARM_ANGULAR_SPEED
 from constants import TELEOP_MAX_GRIPPER_SPEED
+from constants import TELEOP_ARM_POSE_REJECT_ENABLE
+from constants import TELEOP_ARM_MAX_FRAME_POS_DELTA, TELEOP_ARM_MAX_FRAME_ROT_DELTA
 
 POLICY_SOCKET_TIMEOUT_MS = 1000
 POLICY_PROFILE_INTERVAL = 2.0
@@ -172,6 +174,10 @@ def _clip_rotation_step(target_rot, current_rot, max_step):
     limited_delta = delta_rotvec * (max_step / delta_norm)
     return R.from_rotvec(limited_delta) * current_rot
 
+
+def _rotation_distance(rot_a, rot_b):
+    return float(np.linalg.norm((rot_a * rot_b.inv()).as_rotvec()))
+
 class TeleopController:
     def __init__(self):
         # Teleop device IDs
@@ -282,10 +288,22 @@ class TeleopController:
                 pos_diff = pos - self.arm_xr_ref_pos  # WebXR
                 pos_diff += ref_z_rot.apply(self.arm_ref_pos) - z_rot.apply(self.arm_ref_pos)  # Secondary base control: Compensate for base rotation
                 pos_diff[:2] += self.arm_ref_base_pose[:2] - self.base_pose[:2]  # Secondary base control: Compensate for base translation
-                self.arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
+                candidate_arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
 
                 # Orientation
-                self.arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
+                candidate_arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
+
+                if TELEOP_ARM_POSE_REJECT_ENABLE:
+                    pos_delta = float(np.linalg.norm(candidate_arm_target_pos - self.arm_target_pos))
+                    rot_delta = _rotation_distance(candidate_arm_target_rot, self.arm_target_rot)
+                    if (
+                        pos_delta > TELEOP_ARM_MAX_FRAME_POS_DELTA
+                        or rot_delta > TELEOP_ARM_MAX_FRAME_ROT_DELTA
+                    ):
+                        return
+
+                self.arm_target_pos = candidate_arm_target_pos
+                self.arm_target_rot = candidate_arm_target_rot
 
                 # Gripper position
                 self.gripper_target_pos = np.clip(self.gripper_ref_pos + data['gripper_delta'], 0.0, 1.0)

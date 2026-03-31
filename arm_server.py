@@ -345,6 +345,13 @@ class ER3ProCppBridgeArm:
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
+        print(
+            '[arm_cmd] '
+            f'pos=[{arm_pos[0]:.4f}, {arm_pos[1]:.4f}, {arm_pos[2]:.4f}] '
+            f'quat=[{arm_quat[0]:.4f}, {arm_quat[1]:.4f}, {arm_quat[2]:.4f}, {arm_quat[3]:.4f}] '
+            f'gripper={gripper_value:.3f}',
+            flush=True,
+        )
         with self.state_lock:
             self.last_cmd_gripper_pos = gripper_value
             self.gripper_pos[:] = gripper_value
