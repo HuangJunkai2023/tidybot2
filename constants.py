@@ -80,10 +80,13 @@ ER3PRO_GRIPPER_RS485_TORQUE_REG = 0x03FD    # switchMode writes 0(serial)/0x55(I
 ER3PRO_GRIPPER_RS485_POS_REG = 0x03E8       # runWithParam start register
 ER3PRO_GRIPPER_RS485_SPEED_REG = 0x03E8     # runWithParam start register
 ER3PRO_GRIPPER_RS485_POS_NOW_REG = 0x07D1   # input register: high byte is clamp position
+ER3PRO_GRIPPER_RS485_FORCE_NOW_REG = 0x07D2 # input register: high byte is clamp force
 ER3PRO_GRIPPER_RS485_OPEN_POS = 0
 ER3PRO_GRIPPER_RS485_CLOSE_POS = 255
 ER3PRO_GRIPPER_RS485_SPEED = 200
 ER3PRO_GRIPPER_RS485_TORQUE = 40
+ER3PRO_GRIPPER_RS485_TORQUE_MAX = 150
+ER3PRO_GRIPPER_FORCE_MAX = 255
 
 # Gripper observation source for data recording:
 # - 'state': always trust hardware-reported state

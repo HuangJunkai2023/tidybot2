@@ -27,7 +27,7 @@ from constants import ER3PRO_GRIPPER_THRESHOLD, ER3PRO_GRIPPER_BOARD, ER3PRO_GRI
 from constants import ER3PRO_GRIPPER_RS485_SLAVE_ID, ER3PRO_GRIPPER_RS485_ENABLE_ON_START
 from constants import ER3PRO_GRIPPER_RS485_INIT_REG, ER3PRO_GRIPPER_RS485_INIT_VALUE
 from constants import ER3PRO_GRIPPER_RS485_TORQUE_REG, ER3PRO_GRIPPER_RS485_POS_REG, ER3PRO_GRIPPER_RS485_SPEED_REG
-from constants import ER3PRO_GRIPPER_RS485_POS_NOW_REG
+from constants import ER3PRO_GRIPPER_RS485_POS_NOW_REG, ER3PRO_GRIPPER_RS485_FORCE_NOW_REG
 from constants import ER3PRO_GRIPPER_RS485_OPEN_POS, ER3PRO_GRIPPER_RS485_CLOSE_POS
 from constants import ER3PRO_GRIPPER_RS485_SPEED, ER3PRO_GRIPPER_RS485_TORQUE
 from constants import ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, ER3PRO_GRIPPER_USB_SLAVE_ID
@@ -111,7 +111,6 @@ class JodellUsbGripper:
 
         self.last_cmd_time = now
         self.last_cmd_pos = target_pos
-
     def close(self):
         if self.connected:
             ret = self.claw.serialOperation(ER3PRO_GRIPPER_USB_PORT, ER3PRO_GRIPPER_USB_BAUD, False)
@@ -137,6 +136,7 @@ class ER3ProCppBridgeArm:
         self.measured_arm_pos = np.zeros(3, dtype=np.float64)
         self.measured_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
         self.measured_gripper_pos = 1.0
+        self.measured_gripper_force = float('nan')
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
         if not bridge_path.exists():
@@ -170,6 +170,7 @@ class ER3ProCppBridgeArm:
             '--gripper-rs485-pos-reg', str(ER3PRO_GRIPPER_RS485_POS_REG),
             '--gripper-rs485-speed-reg', str(ER3PRO_GRIPPER_RS485_SPEED_REG),
             '--gripper-rs485-pos-now-reg', str(ER3PRO_GRIPPER_RS485_POS_NOW_REG),
+            '--gripper-rs485-force-now-reg', str(ER3PRO_GRIPPER_RS485_FORCE_NOW_REG),
             '--gripper-rs485-open-pos', str(ER3PRO_GRIPPER_RS485_OPEN_POS),
             '--gripper-rs485-close-pos', str(ER3PRO_GRIPPER_RS485_CLOSE_POS),
             '--gripper-rs485-speed', str(ER3PRO_GRIPPER_RS485_SPEED),
@@ -243,7 +244,7 @@ class ER3ProCppBridgeArm:
 
     def _parse_state_response(self, rep):
         items = rep.split()
-        if len(items) != 8 or items[0] != 'STATE':
+        if len(items) not in (8, 9) or items[0] != 'STATE':
             raise RuntimeError(f'Unexpected ER3Pro C++ bridge STATE response: {rep}')
         posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
         arm_pos = posture[:3]
@@ -251,19 +252,21 @@ class ER3ProCppBridgeArm:
         if arm_quat[3] < 0.0:
             np.negative(arm_quat, out=arm_quat)
         reported_gripper = float(items[7])
-        return arm_pos, arm_quat, reported_gripper
+        reported_force = float(items[8]) if len(items) >= 9 else float('nan')
+        return arm_pos, arm_quat, reported_gripper, reported_force
 
     def _refresh_state(self, timeout=3.0):
         rep = self._request('STATE', timeout=timeout)
-        arm_pos, arm_quat, reported_gripper = self._parse_state_response(rep)
+        arm_pos, arm_quat, reported_gripper, reported_force = self._parse_state_response(rep)
         with self.state_lock:
             self.measured_arm_pos = arm_pos
             self.measured_arm_quat = arm_quat
             self.measured_gripper_pos = reported_gripper
+            self.measured_gripper_force = reported_force
             if ER3PRO_ARM_POSE_OBS_SOURCE != 'command':
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
-        return arm_pos, arm_quat, reported_gripper
+        return arm_pos, arm_quat, reported_gripper, reported_force
 
     def _set_worker_paused(self, paused):
         with self.worker_cv:
@@ -317,11 +320,12 @@ class ER3ProCppBridgeArm:
             self._request('RESET', timeout=8.0)
             self.gripper_pos[:] = 1.0
             self.last_cmd_gripper_pos = 1.0
-            arm_pos, arm_quat, reported_gripper = self._refresh_state(timeout=3.0)
+            arm_pos, arm_quat, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
             with self.state_lock:
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
                 self.measured_gripper_pos = reported_gripper
+                self.measured_gripper_force = reported_force
                 self.pending_action = None
         finally:
             self._set_worker_paused(False)
@@ -330,11 +334,12 @@ class ER3ProCppBridgeArm:
         self._set_worker_paused(True)
         try:
             self._request('PRESET', timeout=8.0)
-            arm_pos, arm_quat, reported_gripper = self._refresh_state(timeout=3.0)
+            arm_pos, arm_quat, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
             with self.state_lock:
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
                 self.measured_gripper_pos = reported_gripper
+                self.measured_gripper_force = reported_force
                 self.pending_action = None
         finally:
             self._set_worker_paused(False)
@@ -370,6 +375,7 @@ class ER3ProCppBridgeArm:
                 arm_pos = self.measured_arm_pos.copy()
                 arm_quat = self.measured_arm_quat.copy()
             reported_gripper = self.measured_gripper_pos
+            reported_force = self.measured_gripper_force
             last_cmd_gripper_pos = self.last_cmd_gripper_pos
         if ER3PRO_GRIPPER_OBS_SOURCE == 'command':
             gripper_for_obs = last_cmd_gripper_pos
@@ -389,6 +395,7 @@ class ER3ProCppBridgeArm:
             'arm_pos': arm_pos,
             'arm_quat': arm_quat,
             'gripper_pos': self.gripper_pos.copy(),
+            'gripper_force': np.array([reported_force], dtype=np.float64),
         }
 
     def close(self):
@@ -448,6 +455,7 @@ class KinovaArm:
             'arm_pos': arm_pos,
             'arm_quat': arm_quat,
             'gripper_pos': np.array([self.arm.gripper_pos]),
+            'gripper_force': np.array([np.nan], dtype=np.float64),
         }
 
     def close(self):
