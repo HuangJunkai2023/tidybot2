@@ -46,11 +46,14 @@ BASE_DIFF_DRIVE_MODE = True  # True for two-wheel differential-drive base
 # Teleop jump-guard: limit command slew per control cycle to avoid sudden jumps
 # caused by delayed/outlier phone pose packets.
 TELEOP_JUMP_GUARD_ENABLE = True
-TELEOP_MAX_BASE_LINEAR_SPEED = 0.40   # m/s
-TELEOP_MAX_BASE_ANGULAR_SPEED = 2.00  # rad/s
-TELEOP_MAX_ARM_LINEAR_SPEED = 0.30    # m/s
-TELEOP_MAX_ARM_ANGULAR_SPEED = 2.00   # rad/s
+TELEOP_MAX_BASE_LINEAR_SPEED = 0.30   # m/s
+TELEOP_MAX_BASE_ANGULAR_SPEED = 1.00  # rad/s
+TELEOP_MAX_ARM_LINEAR_SPEED = 0.10    # m/s
+TELEOP_MAX_ARM_ANGULAR_SPEED = 0.20   # rad/s
 TELEOP_MAX_GRIPPER_SPEED = 4.00       # normalized units/s
+TELEOP_ARM_POSE_REJECT_ENABLE = True
+TELEOP_ARM_MAX_FRAME_POS_DELTA = 0.05   # m, reject a single teleop frame if arm target position jumps too far
+TELEOP_ARM_MAX_FRAME_ROT_DELTA = 0.40   # rad, reject a single teleop frame if arm target orientation jumps too far
 
 # ER3Pro arm
 ER3PRO_IP = '192.168.0.160'
@@ -121,7 +124,7 @@ BASE_CAMERA_HEIGHT = 720
 # Backward-compatible alias: base camera is configured by device hint/path.
 BASE_CAMERA_SERIAL = BASE_CAMERA_DEVICE
 WRIST_CAMERA_DEVICE = '/dev/v4l/by-id/usb-GS02_1080P_CAMERA_GS02_1080P_CAMERA-video-index0'
-WRIST_CAMERA_WIDTH = 1080
+WRIST_CAMERA_WIDTH = 1280
 WRIST_CAMERA_HEIGHT = 720
 USE_KINOVA_WRIST_CAMERA = False
 
