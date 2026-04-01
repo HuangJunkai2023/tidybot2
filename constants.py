@@ -46,14 +46,14 @@ BASE_DIFF_DRIVE_MODE = True  # True for two-wheel differential-drive base
 # Teleop jump-guard: limit command slew per control cycle to avoid sudden jumps
 # caused by delayed/outlier phone pose packets.
 TELEOP_JUMP_GUARD_ENABLE = True
-TELEOP_MAX_BASE_LINEAR_SPEED = 0.30   # m/s
-TELEOP_MAX_BASE_ANGULAR_SPEED = 1.00  # rad/s
-TELEOP_MAX_ARM_LINEAR_SPEED = 0.10    # m/s
-TELEOP_MAX_ARM_ANGULAR_SPEED = 0.20   # rad/s
+TELEOP_MAX_BASE_LINEAR_SPEED = 0.50   # m/s
+TELEOP_MAX_BASE_ANGULAR_SPEED = 1.0  # rad/s
+TELEOP_MAX_ARM_LINEAR_SPEED = 0.30    # m/s
+TELEOP_MAX_ARM_ANGULAR_SPEED = 0.50   # rad/s
 TELEOP_MAX_GRIPPER_SPEED = 4.00       # normalized units/s
 TELEOP_ARM_POSE_REJECT_ENABLE = True
-TELEOP_ARM_MAX_FRAME_POS_DELTA = 0.05   # m, reject a single teleop frame if arm target position jumps too far
-TELEOP_ARM_MAX_FRAME_ROT_DELTA = 0.40   # rad, reject a single teleop frame if arm target orientation jumps too far
+TELEOP_ARM_MAX_FRAME_POS_DELTA = 0.08   # m, reject a single teleop frame if arm target position jumps too far
+TELEOP_ARM_MAX_FRAME_ROT_DELTA = 0.20   # rad, reject a single teleop frame if arm target orientation jumps too far
 
 # ER3Pro arm
 ER3PRO_IP = '192.168.0.160'
@@ -80,10 +80,12 @@ ER3PRO_GRIPPER_RS485_TORQUE_REG = 0x03FD    # switchMode writes 0(serial)/0x55(I
 ER3PRO_GRIPPER_RS485_POS_REG = 0x03E8       # runWithParam start register
 ER3PRO_GRIPPER_RS485_SPEED_REG = 0x03E8     # runWithParam start register
 ER3PRO_GRIPPER_RS485_POS_NOW_REG = 0x07D1   # input register: high byte is clamp position
+ER3PRO_GRIPPER_RS485_FORCE_NOW_REG = 0x07D2 # input register: high byte is clamp force
 ER3PRO_GRIPPER_RS485_OPEN_POS = 0
 ER3PRO_GRIPPER_RS485_CLOSE_POS = 255
-ER3PRO_GRIPPER_RS485_SPEED = 200
-ER3PRO_GRIPPER_RS485_TORQUE = 40
+ER3PRO_GRIPPER_RS485_SPEED = 240
+ER3PRO_GRIPPER_RS485_TORQUE = 100
+ER3PRO_GRIPPER_FORCE_MAX = 255
 
 # Gripper observation source for data recording:
 # - 'state': always trust hardware-reported state

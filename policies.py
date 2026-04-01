@@ -66,6 +66,7 @@ class WebServer:
         self.socketio = SocketIO(self.app)
         self.message_buffer = message_buffer
         self.last_echo_time = 0.0
+        self.last_robot_state_time = 0.0
 
         @self.app.route('/')
         def index():
@@ -87,6 +88,22 @@ class WebServer:
 
         # Reduce verbose Flask log output
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+    def publish_robot_state(self, obs):
+        now = time.time()
+        if now - self.last_robot_state_time < 0.05:
+            return
+        self.last_robot_state_time = now
+
+        force_value = None
+        if 'gripper_force' in obs:
+            force_value = float(np.asarray(obs['gripper_force']).item())
+            if not np.isfinite(force_value):
+                force_value = None
+
+        self.socketio.emit('robot_state', {
+            'gripper_force': force_value,
+        })
 
     def run(self, use_ssl=False):
         # Get IP address
@@ -396,8 +413,8 @@ class TeleopPolicy(Policy):
         self.episode_ended = False
 
         # Web server for serving the WebXR phone web app
-        server = WebServer(self.message_buffer)
-        threading.Thread(target=lambda: server.run(use_ssl=use_ssl), daemon=True).start()
+        self.web_server = WebServer(self.message_buffer)
+        threading.Thread(target=lambda: self.web_server.run(use_ssl=use_ssl), daemon=True).start()
 
         # Listener thread to process messages from WebXR client
         threading.Thread(target=self.listener_loop, daemon=True).start()
@@ -424,6 +441,7 @@ class TeleopPolicy(Policy):
         return self._step(obs)
 
     def _step(self, obs):
+        self.web_server.publish_robot_state(obs)
         return self.teleop_controller.step(obs)
 
     def listener_loop(self):
