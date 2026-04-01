@@ -4,7 +4,7 @@ import numpy as np
 # Backend and subsystem switches
 
 ARM_BACKEND = 'er3pro'  # 'er3pro' or 'kinova'
-ENABLE_BASE = True
+ENABLE_BASE = False
 ENABLE_ARM = True
 
 ################################################################################
@@ -51,6 +51,8 @@ TELEOP_MAX_BASE_ANGULAR_SPEED = 1.0  # rad/s
 TELEOP_MAX_ARM_LINEAR_SPEED = 0.30    # m/s
 TELEOP_MAX_ARM_ANGULAR_SPEED = 0.50   # rad/s
 TELEOP_MAX_GRIPPER_SPEED = 4.00       # normalized units/s
+TELEOP_DPAD_TRANSLATION_SPEED = 0.06  # m/s, TCP nudge from on-screen buttons
+TELEOP_TOOL_ROLL_SPEED = 1.20         # rad/s, continuous tool-axis roll while button is held
 TELEOP_ARM_POSE_REJECT_ENABLE = True
 TELEOP_ARM_MAX_FRAME_POS_DELTA = 0.08   # m, reject a single teleop frame if arm target position jumps too far
 TELEOP_ARM_MAX_FRAME_ROT_DELTA = 0.20   # rad, reject a single teleop frame if arm target orientation jumps too far
@@ -80,7 +82,6 @@ ER3PRO_GRIPPER_RS485_TORQUE_REG = 0x03FD    # switchMode writes 0(serial)/0x55(I
 ER3PRO_GRIPPER_RS485_POS_REG = 0x03E8       # runWithParam start register
 ER3PRO_GRIPPER_RS485_SPEED_REG = 0x03E8     # runWithParam start register
 ER3PRO_GRIPPER_RS485_POS_NOW_REG = 0x07D1   # input register: high byte is clamp position
-ER3PRO_GRIPPER_RS485_FORCE_NOW_REG = 0x07D2 # input register: high byte is clamp force
 ER3PRO_GRIPPER_RS485_OPEN_POS = 0
 ER3PRO_GRIPPER_RS485_CLOSE_POS = 255
 ER3PRO_GRIPPER_RS485_SPEED = 240
@@ -120,6 +121,8 @@ ER3PRO_TCP_OFFSET_Z = 0.10    # m, TCP defined at gripper center 10 cm along fla
 ER3PRO_TELEOP_PRESET_JOINT_DEG = np.array([0.0, 30.0, 0.0, 60.0, 0.0, 90.0, 0.0], dtype=np.float64)
 
 # Cameras
+# `base_image` remains the public observation key for backward compatibility,
+# but this camera is mounted globally to observe the workspace.
 BASE_CAMERA_DEVICE = '/dev/v4l/by-id/usb-Intel_R__RealSense_TM__Depth_Camera_435if_Intel_R__RealSense_TM__Depth_Camera_435if-video-index0'
 BASE_CAMERA_WIDTH = 1280
 BASE_CAMERA_HEIGHT = 720

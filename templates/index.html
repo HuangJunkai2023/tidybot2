@@ -30,36 +30,101 @@
         background-color: rgba(240, 240, 240, 0.5);
       }
 
-      #gripper-force-panel {
-        margin: 0.5em;
-        padding: 0.65em 0.8em;
-        width: min(16rem, calc(100vw - 1rem));
-        background: rgba(255, 255, 255, 0.9);
-        border-radius: 0.8rem;
-        box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.12);
+      #dpad-controls {
+        position: fixed;
+        left: 0.75rem;
+        bottom: 8.5rem;
+        z-index: 2;
+        display: grid;
+        grid-template-columns: 3.75rem 3.75rem 3.75rem;
+        grid-template-rows: 3.75rem 3.75rem 3.75rem;
+        gap: 0.45rem;
+        grid-template-areas:
+          ". up ."
+          "left center right"
+          ". down .";
       }
 
-      #gripper-force-label {
+      #tool-roll-controls {
+        position: fixed;
+        left: 50%;
+        bottom: 4.35rem;
+        z-index: 2;
         display: flex;
-        justify-content: space-between;
-        gap: 0.75rem;
-        font-size: 0.95rem;
-        margin-bottom: 0.35rem;
+        flex-direction: row;
+        gap: 0.6rem;
+        transform: translateX(-50%);
       }
 
-      #gripper-force-bar {
-        height: 0.8rem;
-        overflow: hidden;
-        border-radius: 999px;
-        background: rgba(20, 28, 38, 0.12);
+      #gripper-controls {
+        position: fixed;
+        left: 50%;
+        bottom: 0.55rem;
+        z-index: 2;
+        display: flex;
+        flex-direction: row;
+        gap: 0.6rem;
+        transform: translateX(-50%);
       }
 
-      #gripper-force-fill {
-        width: 0%;
-        height: 100%;
-        border-radius: inherit;
-        background: linear-gradient(90deg, #2fbf71 0%, #f0b429 60%, #d64545 100%);
-        transition: width 80ms linear;
+      #z-controls {
+        position: fixed;
+        right: 0.75rem;
+        bottom: 8.5rem;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+
+      .overlay-button {
+        width: 5.4rem;
+        min-height: 3.5rem;
+        border: none;
+        border-radius: 1rem;
+        background: rgba(16, 24, 32, 0.82);
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 600;
+        box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.2);
+      }
+
+      .overlay-button.active {
+        background: rgba(34, 102, 196, 0.9);
+      }
+
+      .dpad-button {
+        width: 3.75rem;
+        min-height: 3.75rem;
+        border-radius: 1rem;
+        font-size: 1.35rem;
+        line-height: 1;
+      }
+
+      #dpad-up { grid-area: up; }
+      #dpad-left { grid-area: left; }
+      #dpad-right { grid-area: right; }
+      #dpad-down { grid-area: down; }
+
+      #dpad-center {
+        grid-area: center;
+        border-radius: 1rem;
+        background: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(2px);
+      }
+
+      .z-button {
+        width: 4.5rem;
+        min-height: 3.75rem;
+        border-radius: 1rem;
+        font-size: 1.2rem;
+      }
+
+      .gripper-button {
+        width: 5rem;
+        min-height: 3rem;
+        border-radius: 1rem;
+        font-size: 1rem;
       }
 
       canvas {
@@ -79,14 +144,24 @@
   <body>
     <div id="overlay">
       <header></header>
-      <div id="gripper-force-panel">
-        <div id="gripper-force-label">
-          <span>夹爪压力</span>
-          <span id="gripper-force-value">--</span>
-        </div>
-        <div id="gripper-force-bar">
-          <div id="gripper-force-fill"></div>
-        </div>
+      <div id="dpad-controls">
+        <button id="dpad-up" class="overlay-button dpad-button" type="button">↑</button>
+        <button id="dpad-left" class="overlay-button dpad-button" type="button">←</button>
+        <div id="dpad-center"></div>
+        <button id="dpad-right" class="overlay-button dpad-button" type="button">→</button>
+        <button id="dpad-down" class="overlay-button dpad-button" type="button">↓</button>
+      </div>
+      <div id="z-controls">
+        <button id="z-up" class="overlay-button z-button" type="button">上移</button>
+        <button id="z-down" class="overlay-button z-button" type="button">下移</button>
+      </div>
+      <div id="tool-roll-controls">
+        <button id="tool-roll-left" class="overlay-button" type="button">左旋</button>
+        <button id="tool-roll-right" class="overlay-button" type="button">右旋</button>
+      </div>
+      <div id="gripper-controls">
+        <button id="gripper-open" class="overlay-button gripper-button" type="button">打开</button>
+        <button id="gripper-close" class="overlay-button gripper-button" type="button">闭合</button>
       </div>
       <p><span id="info"></span></p>
     </div>
@@ -124,20 +199,6 @@
         document.getElementById('info').innerText = rttStats.calculate(rtt);
       });
 
-      socket.on('robot_state', (state) => {
-        const force = state?.gripper_force;
-        const valueEl = document.getElementById('gripper-force-value');
-        const fillEl = document.getElementById('gripper-force-fill');
-        if (typeof force === 'number' && Number.isFinite(force)) {
-          const clamped = Math.max(0, Math.min(255, force));
-          valueEl.innerText = `${Math.round(clamped)}/255`;
-          fillEl.style.width = `${(100 * clamped / 255).toFixed(1)}%`;
-        } else {
-          valueEl.innerText = '--';
-          fillEl.style.width = '0%';
-        }
-      });
-
       document.addEventListener('contextmenu', (event) => {
         event.preventDefault();
       });
@@ -150,6 +211,7 @@
       let xrRefSpace = null;
       let lastSendTimeMs = 0;
       let lastIdleSendTimeMs = 0;
+      let wasControlActive = false;
       const activeSendIntervalMs = 50;
       const idleSendIntervalMs = 200;
 
@@ -224,7 +286,10 @@
       }
 
       // Touch event handling
-      let touchId; let touchStartY; let touchDeltaY; let teleopMode;
+      let touchId; let touchStartY; let touchDeltaY = 0; let teleopMode = 'arm';
+      let toolRollDir = 0;
+      let cartesianNudge = [0, 0, 0];
+      let gripperDir = 0;
       let touchListenersAdded = false;
 
       function addTouchListeners() {
@@ -241,13 +306,81 @@
           return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT';
         }
 
+        function bindHoldButton(buttonId, onChange) {
+          const button = document.getElementById(buttonId);
+          if (!button) return;
+
+          function setActive(active) {
+            onChange(active);
+            button.classList.toggle('active', active);
+          }
+
+          button.addEventListener('touchstart', (event) => {
+            setActive(true);
+            event.preventDefault();
+          }, { passive: false });
+          button.addEventListener('touchend', (event) => {
+            setActive(false);
+            event.preventDefault();
+          }, { passive: false });
+          button.addEventListener('touchcancel', (event) => {
+            setActive(false);
+            event.preventDefault();
+          }, { passive: false });
+          button.addEventListener('mousedown', (event) => {
+            setActive(true);
+            event.preventDefault();
+          });
+          button.addEventListener('mouseup', (event) => {
+            setActive(false);
+            event.preventDefault();
+          });
+          button.addEventListener('mouseleave', () => {
+            setActive(false);
+          });
+        }
+
+        bindHoldButton('tool-roll-left', (active) => {
+          toolRollDir = active ? -1 : (toolRollDir === -1 ? 0 : toolRollDir);
+        });
+        bindHoldButton('tool-roll-right', (active) => {
+          toolRollDir = active ? 1 : (toolRollDir === 1 ? 0 : toolRollDir);
+        });
+        bindHoldButton('dpad-up', (active) => {
+          cartesianNudge[0] = active ? 1 : (cartesianNudge[0] > 0 ? 0 : cartesianNudge[0]);
+        });
+        bindHoldButton('dpad-down', (active) => {
+          cartesianNudge[0] = active ? -1 : (cartesianNudge[0] < 0 ? 0 : cartesianNudge[0]);
+        });
+        bindHoldButton('dpad-left', (active) => {
+          cartesianNudge[1] = active ? 1 : (cartesianNudge[1] > 0 ? 0 : cartesianNudge[1]);
+        });
+        bindHoldButton('dpad-right', (active) => {
+          cartesianNudge[1] = active ? -1 : (cartesianNudge[1] < 0 ? 0 : cartesianNudge[1]);
+        });
+        bindHoldButton('z-up', (active) => {
+          cartesianNudge[2] = active ? 1 : (cartesianNudge[2] > 0 ? 0 : cartesianNudge[2]);
+        });
+        bindHoldButton('z-down', (active) => {
+          cartesianNudge[2] = active ? -1 : (cartesianNudge[2] < 0 ? 0 : cartesianNudge[2]);
+        });
+        bindHoldButton('gripper-open', (active) => {
+          gripperDir = active ? 1 : (gripperDir > 0 ? 0 : gripperDir);
+        });
+        bindHoldButton('gripper-close', (active) => {
+          gripperDir = active ? -1 : (gripperDir < 0 ? 0 : gripperDir);
+        });
+
         document.addEventListener('touchstart', (event) => {
           if (shouldIgnoreTarget(event.target)) return;
           if (touchId === undefined) {
             const touch = event.changedTouches[0];
+            if (touch.clientY >= 0.5 * window.innerHeight) {
+              return;
+            }
             touchId = touch.identifier;
             touchStartY = touch.clientY;
-            teleopMode = touch.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
+            teleopMode = 'arm';
             handleTouch(touch);
           }
           event.preventDefault();
@@ -267,6 +400,7 @@
           for (const touch of event.changedTouches) {
             if (touchId === touch.identifier) {
               touchId = undefined;
+              touchDeltaY = 0;
             }
           }
         }
@@ -282,19 +416,23 @@
         frame.session.requestAnimationFrame(onXRFrame);
 
         // Visualize status of touch control
-        const active = touchId !== undefined;
-        const r = (active && teleopMode === 'base') ? 0.25 : 0;
+        const dpadMagnitude = Math.abs(cartesianNudge[0]) + Math.abs(cartesianNudge[1]) + Math.abs(cartesianNudge[2]);
+        const active = touchId !== undefined || toolRollDir !== 0 || dpadMagnitude > 0 || gripperDir !== 0;
+        const r = toolRollDir !== 0 ? 0.18 : 0;
+        const g = dpadMagnitude > 0 ? 0.18 : 0;
         const b = (active && teleopMode === 'arm')
           ? (Math.abs(touchDeltaY) === 1 ? 1 : 0.25 + 0.25 * touchDeltaY)
           : 0;
-        gl.clearColor(r, 0, b, 0.5);
+        gl.clearColor(r, g, b, 0.5);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         // Send data to server at a bounded rate to avoid overloading mobile browsers.
         const nowMs = Date.now();
         const sendIntervalMs = active ? activeSendIntervalMs : idleSendIntervalMs;
         const lastSentMs = active ? lastSendTimeMs : lastIdleSendTimeMs;
-        if (nowMs - lastSentMs < sendIntervalMs) {
+        const controlStateChanged = active !== wasControlActive;
+        wasControlActive = active;
+        if (!controlStateChanged && nowMs - lastSentMs < sendIntervalMs) {
           return;
         }
         if (active) {
@@ -308,6 +446,7 @@
           const pose = frame.getViewerPose(xrRefSpace);
           if (pose) {
             data.teleop_mode = teleopMode;
+            data.pose_control_active = touchId !== undefined;
             data.position = {
               x: pose.transform.position.x,
               y: pose.transform.position.y,
@@ -322,6 +461,9 @@
           }
           if (teleopMode === 'arm') {
             data.gripper_delta = touchDeltaY;
+            data.gripper_dir = gripperDir;
+            data.tool_roll_dir = toolRollDir;
+            data.cartesian_nudge = cartesianNudge.slice();
           }
         }
         socket.send(data);

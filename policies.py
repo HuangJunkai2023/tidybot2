@@ -14,12 +14,11 @@ from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from scipy.spatial.transform import Rotation as R
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
-from constants import BASE_DIFF_DRIVE_MODE
 from constants import POLICY_CONTROL_PERIOD
 from constants import TELEOP_JUMP_GUARD_ENABLE
-from constants import TELEOP_MAX_BASE_LINEAR_SPEED, TELEOP_MAX_BASE_ANGULAR_SPEED
 from constants import TELEOP_MAX_ARM_LINEAR_SPEED, TELEOP_MAX_ARM_ANGULAR_SPEED
-from constants import TELEOP_MAX_GRIPPER_SPEED
+from constants import TELEOP_MAX_GRIPPER_SPEED, TELEOP_TOOL_ROLL_SPEED
+from constants import TELEOP_DPAD_TRANSLATION_SPEED
 from constants import TELEOP_ARM_POSE_REJECT_ENABLE
 from constants import TELEOP_ARM_MAX_FRAME_POS_DELTA, TELEOP_ARM_MAX_FRAME_ROT_DELTA
 
@@ -66,7 +65,6 @@ class WebServer:
         self.socketio = SocketIO(self.app)
         self.message_buffer = message_buffer
         self.last_echo_time = 0.0
-        self.last_robot_state_time = 0.0
 
         @self.app.route('/')
         def index():
@@ -88,22 +86,6 @@ class WebServer:
 
         # Reduce verbose Flask log output
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
-
-    def publish_robot_state(self, obs):
-        now = time.time()
-        if now - self.last_robot_state_time < 0.05:
-            return
-        self.last_robot_state_time = now
-
-        force_value = None
-        if 'gripper_force' in obs:
-            force_value = float(np.asarray(obs['gripper_force']).item())
-            if not np.isfinite(force_value):
-                force_value = None
-
-        self.socketio.emit('robot_state', {
-            'gripper_force': force_value,
-        })
 
     def run(self, use_ssl=False):
         # Get IP address
@@ -198,8 +180,7 @@ def _rotation_distance(rot_a, rot_b):
 class TeleopController:
     def __init__(self):
         # Teleop device IDs
-        self.primary_device_id = None    # Primary device controls either the arm or the base
-        self.secondary_device_id = None  # Optional secondary device controls the base
+        self.primary_device_id = None
         self.enabled_counts = {}
 
         # Mobile base pose
@@ -222,7 +203,6 @@ class TeleopController:
         self.base_ref_pose = None
         self.arm_ref_pos = None
         self.arm_ref_rot = None
-        self.arm_ref_base_pose = None  # For optional secondary control of base
         self.gripper_ref_pos = None
 
         # Last sent command state (for jump protection).
@@ -230,6 +210,11 @@ class TeleopController:
         self.arm_cmd_pos = None
         self.arm_cmd_rot = None
         self.gripper_cmd_pos = None
+
+        # Continuous end-effector roll input from the WebXR UI.
+        self.tool_roll_input = 0.0
+        self.cartesian_nudge_input = np.zeros(3, dtype=np.float64)
+        self.gripper_input = 0.0
 
     def process_message(self, data):
         if not self.targets_initialized:
@@ -241,74 +226,36 @@ class TeleopController:
         # Update enabled count for the device that sent this message
         self.enabled_counts[device_id] = self.enabled_counts.get(device_id, 0) + 1 if 'teleop_mode' in data else 0
 
-        # Assign primary and secondary devices
+        # Assign primary teleop device
         if self.enabled_counts[device_id] > 2:
-            if self.primary_device_id is None and device_id != self.secondary_device_id:
+            if self.primary_device_id is None:
                 # Note: We skip the first 2 steps because WebXR pose updates have higher latency than touch events
                 self.primary_device_id = device_id
-            elif self.secondary_device_id is None and device_id != self.primary_device_id:
-                self.secondary_device_id = device_id
         elif self.enabled_counts[device_id] == 0:
             if device_id == self.primary_device_id:
-                self.primary_device_id = None  # Primary device no longer enabled
-                self.base_xr_ref_pos = None
+                self.primary_device_id = None
                 self.arm_xr_ref_pos = None
-            elif device_id == self.secondary_device_id:
-                self.secondary_device_id = None
                 self.base_xr_ref_pos = None
+                self.tool_roll_input = 0.0
+                self.cartesian_nudge_input[:] = 0.0
+                self.gripper_input = 0.0
 
         # Teleop is enabled
-        if self.primary_device_id is not None and 'teleop_mode' in data:
-            pos, rot = convert_webxr_pose(data['position'], data['orientation'])
+        if self.primary_device_id is not None and device_id == self.primary_device_id and data.get('teleop_mode') == 'arm':
+            if data.get('pose_control_active', True):
+                pos, rot = convert_webxr_pose(data['position'], data['orientation'])
 
-            # Base movement
-            if data['teleop_mode'] == 'base' or device_id == self.secondary_device_id:  # Note: Secondary device can only control base
-                # Store reference poses
-                if self.base_xr_ref_pos is None:
-                    self.base_ref_pose = self.base_pose.copy()
-                    self.base_xr_ref_pos = pos[:2]
-                    self.base_xr_ref_rot_inv = rot.inv()
-
-                # Position
-                if BASE_DIFF_DRIVE_MODE:
-                    # Differential-drive base: map gesture translation to forward-only travel.
-                    delta = pos[:2] - self.base_xr_ref_pos
-                    ref_theta = self.base_ref_pose[2]
-                    fwd = np.array([math.cos(ref_theta), math.sin(ref_theta)], dtype=np.float64)
-                    forward_delta = float(delta @ fwd)
-                    self.base_target_pose[:2] = self.base_ref_pose[:2] + forward_delta * fwd
-                else:
-                    self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
-
-                # Orientation
-                base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
-                base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-                self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
-
-            # Arm movement
-            elif data['teleop_mode'] == 'arm':
                 # Store reference poses
                 if self.arm_xr_ref_pos is None:
                     self.arm_xr_ref_pos = pos
                     self.arm_xr_ref_rot_inv = rot.inv()
                     self.arm_ref_pos = self.arm_target_pos.copy()
                     self.arm_ref_rot = self.arm_target_rot
-                    self.arm_ref_base_pose = self.base_pose.copy()
-                    self.gripper_ref_pos = self.gripper_target_pos
+                    self.gripper_ref_pos = self.gripper_target_pos.copy()
 
-                # Rotations around z-axis to go between global frame (base) and local frame (arm)
-                z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.base_pose[2])
-                z_rot_inv = z_rot.inv()
-                ref_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.arm_ref_base_pose[2])
-
-                # Position
-                pos_diff = pos - self.arm_xr_ref_pos  # WebXR
-                pos_diff += ref_z_rot.apply(self.arm_ref_pos) - z_rot.apply(self.arm_ref_pos)  # Secondary base control: Compensate for base rotation
-                pos_diff[:2] += self.arm_ref_base_pose[:2] - self.base_pose[:2]  # Secondary base control: Compensate for base translation
-                candidate_arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
-
-                # Orientation
-                candidate_arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
+                # Fixed-world arm teleop: with no mobile base, pose deltas map directly.
+                candidate_arm_target_pos = self.arm_ref_pos + (pos - self.arm_xr_ref_pos)
+                candidate_arm_target_rot = (rot * self.arm_xr_ref_rot_inv) * self.arm_ref_rot
 
                 if TELEOP_ARM_POSE_REJECT_ENABLE:
                     pos_delta = float(np.linalg.norm(candidate_arm_target_pos - self.arm_target_pos))
@@ -321,14 +268,33 @@ class TeleopController:
 
                 self.arm_target_pos = candidate_arm_target_pos
                 self.arm_target_rot = candidate_arm_target_rot
+                self.gripper_target_pos = np.clip(
+                    self.gripper_ref_pos + data.get('gripper_delta', 0.0),
+                    0.0,
+                    1.0,
+                )
+            else:
+                self.arm_xr_ref_pos = None
+                self.arm_xr_ref_rot_inv = None
+                self.arm_ref_pos = None
+                self.arm_ref_rot = None
+                self.gripper_ref_pos = None
 
-                # Gripper position
-                self.gripper_target_pos = np.clip(self.gripper_ref_pos + data['gripper_delta'], 0.0, 1.0)
+            self.tool_roll_input = float(np.clip(data.get('tool_roll_dir', 0.0), -1.0, 1.0))
+            cartesian_nudge = np.asarray(data.get('cartesian_nudge', [0.0, 0.0, 0.0]), dtype=np.float64)
+            if cartesian_nudge.shape == (3,):
+                self.cartesian_nudge_input[:] = np.clip(cartesian_nudge, -1.0, 1.0)
+            else:
+                self.cartesian_nudge_input[:] = 0.0
+            self.gripper_input = float(np.clip(data.get('gripper_dir', 0.0), -1.0, 1.0))
 
         # Teleop is disabled
         elif self.primary_device_id is None:
             # Update target pose in case base is pushed while teleop is disabled
             self.base_target_pose = self.base_pose
+            self.tool_roll_input = 0.0
+            self.cartesian_nudge_input[:] = 0.0
+            self.gripper_input = 0.0
 
     def step(self, obs):
         # Update robot state
@@ -358,6 +324,9 @@ class TeleopController:
             self.arm_cmd_pos = obs['arm_pos'].copy()
             self.arm_cmd_rot = R.from_quat(obs['arm_quat'])
             self.gripper_cmd_pos = obs['gripper_pos'].copy()
+            self.tool_roll_input = 0.0
+            self.cartesian_nudge_input[:] = 0.0
+            self.gripper_input = 0.0
             return None
 
         assert self.base_target_pose is not None
@@ -369,19 +338,25 @@ class TeleopController:
         assert self.arm_cmd_rot is not None
         assert self.gripper_cmd_pos is not None
 
+        if abs(self.tool_roll_input) > 1e-6:
+            roll_step = TELEOP_TOOL_ROLL_SPEED * float(POLICY_CONTROL_PERIOD) * self.tool_roll_input
+            self.arm_target_rot = self.arm_target_rot * R.from_rotvec(np.array([0.0, 0.0, roll_step], dtype=np.float64))
+        if np.linalg.norm(self.cartesian_nudge_input) > 1e-6:
+            cartesian_step = TELEOP_DPAD_TRANSLATION_SPEED * float(POLICY_CONTROL_PERIOD) * self.cartesian_nudge_input
+            self.arm_target_pos = self.arm_target_pos + cartesian_step
+        if abs(self.gripper_input) > 1e-6:
+            gripper_step = TELEOP_MAX_GRIPPER_SPEED * float(POLICY_CONTROL_PERIOD) * self.gripper_input
+            self.gripper_target_pos[0] = np.clip(self.gripper_target_pos[0] + gripper_step, 0.0, 1.0)
+
         # Slew-rate limiter to protect against occasional pose jumps during teleop.
         if TELEOP_JUMP_GUARD_ENABLE:
             dt = float(POLICY_CONTROL_PERIOD)
 
-            max_base_linear_step = TELEOP_MAX_BASE_LINEAR_SPEED * dt
-            max_base_angular_step = TELEOP_MAX_BASE_ANGULAR_SPEED * dt
             max_arm_linear_step = TELEOP_MAX_ARM_LINEAR_SPEED * dt
             max_arm_angular_step = TELEOP_MAX_ARM_ANGULAR_SPEED * dt
             max_gripper_step = TELEOP_MAX_GRIPPER_SPEED * dt
 
-            self.base_cmd_pose[:2] = _clip_vector_step(self.base_target_pose[:2], self.base_cmd_pose[:2], max_base_linear_step)
-            self.base_cmd_pose[2] = _clip_angle_step(self.base_target_pose[2], self.base_cmd_pose[2], max_base_angular_step)
-
+            self.base_cmd_pose = self.base_target_pose.copy()
             self.arm_cmd_pos = _clip_vector_step(self.arm_target_pos, self.arm_cmd_pos, max_arm_linear_step)
             self.arm_cmd_rot = _clip_rotation_step(self.arm_target_rot, self.arm_cmd_rot, max_arm_angular_step)
             self.gripper_cmd_pos[0] = _clip_scalar_step(self.gripper_target_pos[0], self.gripper_cmd_pos[0], max_gripper_step)
@@ -441,7 +416,6 @@ class TeleopPolicy(Policy):
         return self._step(obs)
 
     def _step(self, obs):
-        self.web_server.publish_robot_state(obs)
         return self.teleop_controller.step(obs)
 
     def listener_loop(self):
