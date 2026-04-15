@@ -40,7 +40,7 @@ from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
 from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
 from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
-from constants import ER3PRO_TCP_OFFSET_Z
+from constants import ER3PRO_TCP_OFFSET_Z, ER3PRO_ARM_CMD_LOG_INTERVAL
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
 
 ER3PRO_STATE_POLL_PERIOD = 0.10
@@ -137,6 +137,7 @@ class ER3ProCppBridgeArm:
         self.measured_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
         self.measured_gripper_pos = 1.0
         self.measured_gripper_force = float('nan')
+        self.last_cmd_log_time = 0.0
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
         if not bridge_path.exists():
@@ -350,13 +351,17 @@ class ER3ProCppBridgeArm:
 
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
-        print(
-            '[arm_cmd] '
-            f'pos=[{arm_pos[0]:.4f}, {arm_pos[1]:.4f}, {arm_pos[2]:.4f}] '
-            f'quat=[{arm_quat[0]:.4f}, {arm_quat[1]:.4f}, {arm_quat[2]:.4f}, {arm_quat[3]:.4f}] '
-            f'gripper={gripper_value:.3f}',
-            flush=True,
-        )
+        if ER3PRO_ARM_CMD_LOG_INTERVAL > 0.0:
+            now = time.monotonic()
+            if now - self.last_cmd_log_time >= ER3PRO_ARM_CMD_LOG_INTERVAL:
+                print(
+                    '[arm_cmd] '
+                    f'pos=[{arm_pos[0]:.4f}, {arm_pos[1]:.4f}, {arm_pos[2]:.4f}] '
+                    f'quat=[{arm_quat[0]:.4f}, {arm_quat[1]:.4f}, {arm_quat[2]:.4f}, {arm_quat[3]:.4f}] '
+                    f'gripper={gripper_value:.3f}',
+                    flush=True,
+                )
+                self.last_cmd_log_time = now
         with self.state_lock:
             self.last_cmd_gripper_pos = gripper_value
             self.gripper_pos[:] = gripper_value
