@@ -24,11 +24,19 @@ from constants import TELEOP_DPAD_TRANSLATION_SPEED
 from constants import TELEOP_TOOL_ROLL_SPEED
 from constants import TELEOP_ARM_POSE_REJECT_ENABLE
 from constants import TELEOP_ARM_MAX_FRAME_POS_DELTA, TELEOP_ARM_MAX_FRAME_ROT_DELTA
+from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
+from constants import UARM_JOINT_LIMIT_DEG_MAX, UARM_JOINT_LIMIT_DEG_MIN
+from constants import UARM_JOINT_OFFSET_DEG, UARM_JOINT_SCALE, UARM_JOINT_SIGN
+from constants import UARM_MAX_JOINT_SPEED_DEG
+from uarm_teleop import UarmMasterReader
 
 POLICY_SOCKET_TIMEOUT_MS = 1000
 POLICY_PROFILE_INTERVAL = 2.0
 
 class Policy:
+    uses_web_start = False
+    handles_teleop_preset = False
+
     def reset(self):
         raise NotImplementedError
 
@@ -431,6 +439,8 @@ class TeleopController:
 
 # Teleop using WebXR phone web app
 class TeleopPolicy(Policy):
+    uses_web_start = True
+
     def __init__(self, use_ssl=False):
         self.message_buffer = TeleopMessageBuffer()
         self.teleop_controller = None
@@ -489,6 +499,52 @@ class TeleopPolicy(Policy):
 
     def _process_message(self, data):
         self.teleop_controller.process_message(data)
+
+
+class UarmTeleopPolicy(Policy):
+    handles_teleop_preset = True
+
+    def __init__(self, arm_proxy):
+        self.arm = arm_proxy
+        self.reader = None
+        self.master_zero_deg = np.zeros(7, dtype=np.float64)
+        self.last_target_deg = ER3PRO_TELEOP_PRESET_JOINT_DEG.astype(np.float64).copy()
+        self.last_gripper = 1.0
+
+    def reset(self):
+        if self.reader is not None:
+            self.reader.close()
+        self.reader = UarmMasterReader()
+        self.arm.move_to_teleop_preset()
+        self.reader.recalibrate_zero()
+        self.master_zero_deg = np.zeros(7, dtype=np.float64)
+        self.last_target_deg = ER3PRO_TELEOP_PRESET_JOINT_DEG.astype(np.float64).copy()
+        self.last_gripper = 1.0
+        print(f'[uarm] target preset deg={np.round(self.last_target_deg, 2).tolist()}')
+
+    def step(self, obs):
+        master_joint_deg, gripper_pos = self.reader.read()
+        target_deg = (
+            ER3PRO_TELEOP_PRESET_JOINT_DEG
+            + UARM_JOINT_SIGN * UARM_JOINT_SCALE * (master_joint_deg - self.master_zero_deg)
+            + UARM_JOINT_OFFSET_DEG
+        )
+        target_deg = np.clip(target_deg, UARM_JOINT_LIMIT_DEG_MIN, UARM_JOINT_LIMIT_DEG_MAX)
+
+        max_step_deg = UARM_MAX_JOINT_SPEED_DEG * POLICY_CONTROL_PERIOD
+        delta_deg = np.clip(target_deg - self.last_target_deg, -max_step_deg, max_step_deg)
+        target_deg = self.last_target_deg + delta_deg
+        self.last_target_deg = target_deg
+        self.last_gripper = float(np.clip(gripper_pos, 0.0, 1.0))
+
+        arm_joints = np.deg2rad(target_deg)
+        fk = self.arm.forward_kinematics(arm_joints)
+        return {
+            'arm_joints': arm_joints.astype(np.float64),
+            'arm_pos': np.asarray(fk['arm_pos'], dtype=np.float64),
+            'arm_quat': np.asarray(fk['arm_quat'], dtype=np.float64),
+            'gripper_pos': np.array([self.last_gripper], dtype=np.float64),
+        }
 
 # Execute policy running on remote server
 class RemotePolicy(TeleopPolicy):

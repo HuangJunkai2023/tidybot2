@@ -133,8 +133,10 @@ class ER3ProCppBridgeArm:
         self.last_state_error_time = 0.0
         self.cmd_arm_pos = np.zeros(3, dtype=np.float64)
         self.cmd_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+        self.cmd_arm_joints = np.deg2rad(ER3PRO_TELEOP_PRESET_JOINT_DEG.astype(np.float64))
         self.measured_arm_pos = np.zeros(3, dtype=np.float64)
         self.measured_arm_quat = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float64)
+        self.measured_arm_joints = np.deg2rad(ER3PRO_TELEOP_PRESET_JOINT_DEG.astype(np.float64))
         self.measured_gripper_pos = 1.0
         self.measured_gripper_force = float('nan')
         self.last_cmd_log_time = 0.0
@@ -256,18 +258,42 @@ class ER3ProCppBridgeArm:
         reported_force = float(items[8]) if len(items) >= 9 else float('nan')
         return arm_pos, arm_quat, reported_gripper, reported_force
 
+    def _parse_joint_state_response(self, rep):
+        items = rep.split()
+        if len(items) not in (9, 10) or items[0] != 'STATEJ':
+            raise RuntimeError(f'Unexpected ER3Pro C++ bridge STATEJ response: {rep}')
+        arm_joints = np.array([float(v) for v in items[1:8]], dtype=np.float64)
+        reported_gripper = float(items[8])
+        reported_force = float(items[9]) if len(items) >= 10 else float('nan')
+        return arm_joints, reported_gripper, reported_force
+
+    def _parse_fk_response(self, rep):
+        items = rep.split()
+        if len(items) != 7 or items[0] != 'FKJ':
+            raise RuntimeError(f'Unexpected ER3Pro C++ bridge FKJ response: {rep}')
+        posture = np.array([float(v) for v in items[1:7]], dtype=np.float64)
+        arm_pos = posture[:3]
+        arm_quat = R.from_euler('xyz', posture[3:]).as_quat()
+        if arm_quat[3] < 0.0:
+            np.negative(arm_quat, out=arm_quat)
+        return arm_pos, arm_quat
+
     def _refresh_state(self, timeout=3.0):
-        rep = self._request('STATE', timeout=timeout)
-        arm_pos, arm_quat, reported_gripper, reported_force = self._parse_state_response(rep)
+        pose_rep = self._request('STATE', timeout=timeout)
+        joint_rep = self._request('STATEJ', timeout=timeout)
+        arm_pos, arm_quat, reported_gripper, reported_force = self._parse_state_response(pose_rep)
+        arm_joints, _, _ = self._parse_joint_state_response(joint_rep)
         with self.state_lock:
             self.measured_arm_pos = arm_pos
             self.measured_arm_quat = arm_quat
+            self.measured_arm_joints = arm_joints
             self.measured_gripper_pos = reported_gripper
             self.measured_gripper_force = reported_force
             if ER3PRO_ARM_POSE_OBS_SOURCE != 'command':
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
-        return arm_pos, arm_quat, reported_gripper, reported_force
+                self.cmd_arm_joints = arm_joints.copy()
+        return arm_pos, arm_quat, arm_joints, reported_gripper, reported_force
 
     def _set_worker_paused(self, paused):
         with self.worker_cv:
@@ -294,12 +320,22 @@ class ER3ProCppBridgeArm:
 
             if action is not None:
                 try:
-                    arm_pos, arm_quat, gripper_value = action
-                    self._request(
-                        f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
-                        f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
-                        timeout=8.0,
-                    )
+                    if action['kind'] == 'joint':
+                        arm_joints = action['arm_joints']
+                        gripper_value = action['gripper']
+                        self._request(
+                            'EXECJ ' + ' '.join(str(float(v)) for v in arm_joints) + f' {gripper_value}',
+                            timeout=8.0,
+                        )
+                    else:
+                        arm_pos = action['arm_pos']
+                        arm_quat = action['arm_quat']
+                        gripper_value = action['gripper']
+                        self._request(
+                            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
+                            f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
+                            timeout=8.0,
+                        )
                     if self.usb_gripper is not None:
                         self.usb_gripper.command(gripper_value)
                 except Exception as e:
@@ -321,10 +357,11 @@ class ER3ProCppBridgeArm:
             self._request('RESET', timeout=8.0)
             self.gripper_pos[:] = 1.0
             self.last_cmd_gripper_pos = 1.0
-            arm_pos, arm_quat, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
+            arm_pos, arm_quat, arm_joints, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
             with self.state_lock:
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
+                self.cmd_arm_joints = arm_joints.copy()
                 self.measured_gripper_pos = reported_gripper
                 self.measured_gripper_force = reported_force
                 self.pending_action = None
@@ -335,10 +372,11 @@ class ER3ProCppBridgeArm:
         self._set_worker_paused(True)
         try:
             self._request('PRESET', timeout=8.0)
-            arm_pos, arm_quat, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
+            arm_pos, arm_quat, arm_joints, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
             with self.state_lock:
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
+                self.cmd_arm_joints = arm_joints.copy()
                 self.measured_gripper_pos = reported_gripper
                 self.measured_gripper_force = reported_force
                 self.pending_action = None
@@ -346,39 +384,74 @@ class ER3ProCppBridgeArm:
             self._set_worker_paused(False)
 
     def execute_action(self, action):
+        arm_joints = None
+        if 'arm_joints' in action:
+            arm_joints = np.asarray(action['arm_joints'], dtype=np.float64)
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
         arm_quat = np.asarray(action['arm_quat'], dtype=np.float64)
-
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
         if ER3PRO_ARM_CMD_LOG_INTERVAL > 0.0:
             now = time.monotonic()
             if now - self.last_cmd_log_time >= ER3PRO_ARM_CMD_LOG_INTERVAL:
-                print(
-                    '[arm_cmd] '
-                    f'pos=[{arm_pos[0]:.4f}, {arm_pos[1]:.4f}, {arm_pos[2]:.4f}] '
-                    f'quat=[{arm_quat[0]:.4f}, {arm_quat[1]:.4f}, {arm_quat[2]:.4f}, {arm_quat[3]:.4f}] '
-                    f'gripper={gripper_value:.3f}',
-                    flush=True,
-                )
+                if arm_joints is not None:
+                    print(
+                        '[arm_cmd] '
+                        f'joints=[{", ".join(f"{v:.4f}" for v in arm_joints)}] '
+                        f'gripper={gripper_value:.3f}',
+                        flush=True,
+                    )
+                else:
+                    print(
+                        '[arm_cmd] '
+                        f'pos=[{arm_pos[0]:.4f}, {arm_pos[1]:.4f}, {arm_pos[2]:.4f}] '
+                        f'quat=[{arm_quat[0]:.4f}, {arm_quat[1]:.4f}, {arm_quat[2]:.4f}, {arm_quat[3]:.4f}] '
+                        f'gripper={gripper_value:.3f}',
+                        flush=True,
+                    )
                 self.last_cmd_log_time = now
         with self.state_lock:
             self.last_cmd_gripper_pos = gripper_value
             self.gripper_pos[:] = gripper_value
             self.cmd_arm_pos = arm_pos.copy()
             self.cmd_arm_quat = arm_quat.copy()
+            if arm_joints is not None:
+                self.cmd_arm_joints = arm_joints.copy()
         with self.worker_cv:
-            self.pending_action = (arm_pos.copy(), arm_quat.copy(), gripper_value)
+            if arm_joints is not None:
+                self.pending_action = {
+                    'kind': 'joint',
+                    'arm_joints': arm_joints.copy(),
+                    'gripper': gripper_value,
+                }
+            else:
+                self.pending_action = {
+                    'kind': 'cartesian',
+                    'arm_pos': arm_pos.copy(),
+                    'arm_quat': arm_quat.copy(),
+                    'gripper': gripper_value,
+                }
             self.worker_cv.notify()
+
+    def forward_kinematics(self, arm_joints):
+        arm_joints = np.asarray(arm_joints, dtype=np.float64)
+        rep = self._request('FKJ ' + ' '.join(str(float(v)) for v in arm_joints), timeout=3.0)
+        arm_pos, arm_quat = self._parse_fk_response(rep)
+        return {
+            'arm_pos': arm_pos,
+            'arm_quat': arm_quat,
+        }
 
     def get_state(self):
         with self.state_lock:
             if ER3PRO_ARM_POSE_OBS_SOURCE == 'command':
                 arm_pos = self.cmd_arm_pos.copy()
                 arm_quat = self.cmd_arm_quat.copy()
+                arm_joints = self.cmd_arm_joints.copy()
             else:
                 arm_pos = self.measured_arm_pos.copy()
                 arm_quat = self.measured_arm_quat.copy()
+                arm_joints = self.measured_arm_joints.copy()
             reported_gripper = self.measured_gripper_pos
             reported_force = self.measured_gripper_force
             last_cmd_gripper_pos = self.last_cmd_gripper_pos
@@ -399,6 +472,7 @@ class ER3ProCppBridgeArm:
         return {
             'arm_pos': arm_pos,
             'arm_quat': arm_quat,
+            'arm_joints': arm_joints,
             'gripper_pos': self.gripper_pos.copy(),
             'gripper_force': np.array([reported_force], dtype=np.float64),
         }
@@ -493,6 +567,11 @@ class Arm:
     def move_to_teleop_preset(self):
         if ARM_BACKEND == 'er3pro':
             self.impl.move_to_teleop_preset()
+
+    def forward_kinematics(self, arm_joints):
+        if ARM_BACKEND != 'er3pro':
+            raise NotImplementedError('forward_kinematics is only implemented for ER3Pro')
+        return self.impl.forward_kinematics(arm_joints)
 
     def close(self):
         self.impl.close()

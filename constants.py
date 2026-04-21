@@ -140,3 +140,21 @@ POLICY_CONTROL_FREQ = 20
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
 POLICY_IMAGE_WIDTH = 84
 POLICY_IMAGE_HEIGHT = 84
+
+################################################################################
+# U-Arm teleoperation
+
+UARM_SERIAL_PORT = '/dev/ttyUSB0'
+UARM_BAUDRATE = 115200
+UARM_SERVO_IDS = tuple(range(8))
+UARM_ARM_SERVO_IDS = tuple(range(7))
+UARM_GRIPPER_SERVO_ID = 7
+UARM_JOINT_SIGN = np.ones(7, dtype=np.float64)
+UARM_JOINT_SCALE = np.ones(7, dtype=np.float64)
+UARM_JOINT_OFFSET_DEG = np.zeros(7, dtype=np.float64)
+UARM_JOINT_LIMIT_DEG_MIN = np.array([-170.0, -120.0, -170.0, -170.0, -170.0, -170.0, -170.0], dtype=np.float64)
+UARM_JOINT_LIMIT_DEG_MAX = np.array([170.0, 120.0, 170.0, 170.0, 170.0, 170.0, 170.0], dtype=np.float64)
+UARM_MAX_JOINT_SPEED_DEG = np.array([90.0, 90.0, 90.0, 120.0, 120.0, 120.0, 120.0], dtype=np.float64)
+UARM_MAX_FRAME_DELTA_DEG = 25.0
+UARM_GRIPPER_OPEN_DEG = 270.0
+UARM_GRIPPER_CLOSE_DEG = 0.0

@@ -10,7 +10,7 @@ from constants import ENABLE_ARM
 from constants import ARM_BACKEND
 from constants import ER3PRO_ARM_POSE_OBS_SOURCE
 from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy
+from policies import TeleopPolicy, RemotePolicy, UarmTeleopPolicy
 
 PROFILE_INTERVAL = 2.0
 ENABLE_MAIN_LOOP_PROFILE = False
@@ -51,6 +51,8 @@ def _build_logged_observation(obs, action):
         # Save demonstration command for arm pose so dataset aligns with teleop intent.
         logged_obs['arm_pos'] = np.asarray(action['arm_pos'], dtype=np.float64).copy()
         logged_obs['arm_quat'] = np.asarray(action['arm_quat'], dtype=np.float64).copy()
+        if 'arm_joints' in action:
+            logged_obs['arm_joints'] = np.asarray(action['arm_joints'], dtype=np.float64).copy()
         logged_obs['gripper_pos'] = np.asarray(action['gripper_pos'], dtype=np.float64).copy()
     return logged_obs
 
@@ -153,78 +155,88 @@ def run_episode(env, policy, writer=None):
     env.reset()
     print('Env has been reset')
 
-    # Wait for user to press "Start episode"
-    print('Press "Start episode" in the web app when ready to start new episode')
+    # Wait for teleop input source to become active.
+    if getattr(policy, 'uses_web_start', False):
+        print('Press "Start episode" in the web app when ready to start new episode')
+    else:
+        print('Initializing teleop input source...')
     policy.reset()
 
-    move_arm_to_teleop_preset(env)
+    if not getattr(policy, 'handles_teleop_preset', False):
+        move_arm_to_teleop_preset(env)
 
     print('Starting new episode')
 
     episode_ended = False
     start_time = time.time()
     profile['last_time'] = start_time
-    for step_idx in count():
-        loop_start_time = time.time()
+    try:
+        for step_idx in count():
+            loop_start_time = time.time()
 
-        # Enforce desired control freq
-        step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
-        while time.time() < step_end_time:
-            time.sleep(0.0001)
+            # Enforce desired control freq
+            step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
+            while time.time() < step_end_time:
+                time.sleep(0.0001)
 
-        # Get latest observation
-        get_obs_start = time.time()
-        obs = env.get_obs()
-        get_obs_ms = 1000.0 * (time.time() - get_obs_start)
+            # Get latest observation
+            get_obs_start = time.time()
+            obs = env.get_obs()
+            get_obs_ms = 1000.0 * (time.time() - get_obs_start)
 
-        # Get action
-        policy_start = time.time()
-        action = policy.step(obs)
-        policy_ms = 1000.0 * (time.time() - policy_start)
+            # Get action
+            policy_start = time.time()
+            action = policy.step(obs)
+            policy_ms = 1000.0 * (time.time() - policy_start)
 
-        # No action if teleop not enabled
-        if action is None:
+            # No action if teleop not enabled
+            if action is None:
+                update_profile(
+                    get_obs_ms,
+                    policy_ms,
+                    0.0,
+                    1000.0 * (time.time() - loop_start_time),
+                )
+                maybe_print_profile()
+                continue
+
+            # Execute valid action on robot
+            if isinstance(action, dict):
+                env_step_start = time.time()
+                env.step(action)
+                env_step_ms = 1000.0 * (time.time() - env_step_start)
+
+                if writer is not None and not episode_ended:
+                    # Record executed action
+                    writer.step(_build_logged_observation(obs, action), action)
+
+            # Episode ended
+            elif not episode_ended and action == 'end_episode':
+                episode_ended = True
+                print('Episode ended')
+
+                if writer is not None and should_save_episode(writer):
+                    # Save to disk in background thread
+                    writer.flush_async()
+
+                print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
+
+            # Ready for env reset
+            elif action == 'reset_env':
+                break
+
             update_profile(
                 get_obs_ms,
                 policy_ms,
-                0.0,
+                env_step_ms if isinstance(action, dict) else 0.0,
                 1000.0 * (time.time() - loop_start_time),
             )
             maybe_print_profile()
-            continue
-
-        # Execute valid action on robot
-        if isinstance(action, dict):
-            env_step_start = time.time()
-            env.step(action)
-            env_step_ms = 1000.0 * (time.time() - env_step_start)
-
-            if writer is not None and not episode_ended:
-                # Record executed action
-                writer.step(_build_logged_observation(obs, action), action)
-
-        # Episode ended
-        elif not episode_ended and action == 'end_episode':
-            episode_ended = True
-            print('Episode ended')
-
-            if writer is not None and should_save_episode(writer):
-                # Save to disk in background thread
-                writer.flush_async()
-
-            print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
-
-        # Ready for env reset
-        elif action == 'reset_env':
-            break
-
-        update_profile(
-            get_obs_ms,
-            policy_ms,
-            env_step_ms if isinstance(action, dict) else 0.0,
-            1000.0 * (time.time() - loop_start_time),
-        )
-        maybe_print_profile()
+    except KeyboardInterrupt:
+        if writer is not None and len(writer) > 0 and should_save_episode(writer):
+            writer.flush_async()
+            writer.wait_for_flush()
+        raise
 
     if writer is not None:
         # Wait for writer to finish saving to disk
@@ -244,7 +256,10 @@ def main(args):
 
     # Create policy
     if args.teleop:
-        policy = TeleopPolicy(use_ssl=args.ssl)
+        if args.uarm:
+            policy = UarmTeleopPolicy(env.arm)
+        else:
+            policy = TeleopPolicy(use_ssl=args.ssl)
     else:
         policy = RemotePolicy(use_ssl=args.ssl)
 
@@ -261,5 +276,9 @@ if __name__ == '__main__':
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--ssl', action='store_true', help='Use HTTPS instead of HTTP (required for WebXR on some devices)')
+    parser.add_argument('--uarm', action='store_true', help='Use Zhonglin U-Arm as the only teleop input source')
     parser.add_argument('--output-dir', default='data/demos')
-    main(parser.parse_args())
+    args = parser.parse_args()
+    if args.uarm and not args.teleop:
+        parser.error('--uarm requires --teleop')
+    main(args)
