@@ -136,15 +136,28 @@ class RealEnv:
     def step(self, action):
         # Note: We intentionally do not return obs here to prevent the policy from using outdated data
         if self.base is not None:
-            t0 = time.time()
-            self.base.execute_action(action)  # Non-blocking
-            self.last_step_timing_ms['base_action'] = 1000.0 * (time.time() - t0)
+            if 'base_pose' in action:
+                t0 = time.time()
+                self.base.execute_action({'base_pose': action['base_pose']})  # Non-blocking
+                self.last_step_timing_ms['base_action'] = 1000.0 * (time.time() - t0)
+            else:
+                self.last_step_timing_ms['base_action'] = 0.0
         else:
             self.last_step_timing_ms['base_action'] = 0.0
         if self.arm is not None:
-            t0 = time.time()
-            self.arm.execute_action(action)   # Non-blocking
-            self.last_step_timing_ms['arm_action'] = 1000.0 * (time.time() - t0)
+            if all(k in action for k in ('arm_pos', 'arm_quat', 'gripper_pos')):
+                arm_action = {
+                    'arm_pos': action['arm_pos'],
+                    'arm_quat': action['arm_quat'],
+                    'gripper_pos': action['gripper_pos'],
+                }
+                if 'arm_joints' in action:
+                    arm_action['arm_joints'] = action['arm_joints']
+                t0 = time.time()
+                self.arm.execute_action(arm_action)   # Non-blocking
+                self.last_step_timing_ms['arm_action'] = 1000.0 * (time.time() - t0)
+            else:
+                self.last_step_timing_ms['arm_action'] = 0.0
         else:
             self.last_step_timing_ms['arm_action'] = 0.0
 

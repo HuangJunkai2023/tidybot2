@@ -149,7 +149,9 @@ UARM_BAUDRATE = 115200
 UARM_SERVO_IDS = tuple(range(8))
 UARM_ARM_SERVO_IDS = tuple(range(7))
 UARM_GRIPPER_SERVO_ID = 7
-UARM_JOINT_SIGN = np.ones(7, dtype=np.float64)
+# Joint-direction calibration for the 7 arm servos. Servo 003 is reversed
+# relative to the ER3Pro teleop convention, so its sign is flipped here.
+UARM_JOINT_SIGN = np.array([1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0], dtype=np.float64)
 UARM_JOINT_SCALE = np.ones(7, dtype=np.float64)
 UARM_JOINT_OFFSET_DEG = np.zeros(7, dtype=np.float64)
 UARM_JOINT_LIMIT_DEG_MIN = np.array([-170.0, -120.0, -170.0, -170.0, -170.0, -170.0, -170.0], dtype=np.float64)

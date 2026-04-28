@@ -56,6 +56,20 @@ def _build_logged_observation(obs, action):
         logged_obs['gripper_pos'] = np.asarray(action['gripper_pos'], dtype=np.float64).copy()
     return logged_obs
 
+def _normalize_action_for_env(obs, action):
+    if not isinstance(action, dict):
+        return action
+
+    normalized_action = dict(action)
+
+    # Some teleop sources, such as UArm, only drive the arm. Keep the base
+    # command pinned to the current pose so downstream components still receive
+    # the full action schema they expect.
+    if 'base_pose' not in normalized_action and 'base_pose' in obs:
+        normalized_action['base_pose'] = np.asarray(obs['base_pose'], dtype=np.float64).copy()
+
+    return normalized_action
+
 def run_episode(env, policy, writer=None):
     profile = {
         'last_time': time.time(),
@@ -202,6 +216,7 @@ def run_episode(env, policy, writer=None):
 
             # Execute valid action on robot
             if isinstance(action, dict):
+                action = _normalize_action_for_env(obs, action)
                 env_step_start = time.time()
                 env.step(action)
                 env_step_ms = 1000.0 * (time.time() - env_step_start)
