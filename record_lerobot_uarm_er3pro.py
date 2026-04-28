@@ -17,7 +17,8 @@ from constants import UARM_BAUDRATE, UARM_GRIPPER_CLOSE_DEG, UARM_GRIPPER_OPEN_D
 from constants import UARM_JOINT_LIMIT_DEG_MAX, UARM_JOINT_LIMIT_DEG_MIN
 from constants import UARM_JOINT_OFFSET_DEG, UARM_JOINT_SCALE, UARM_JOINT_SIGN
 from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_SPEED_DEG
-from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_FILTER_FREQ, UARM_RT_READ_TIMEOUT_US
+from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FILTER_ALPHA
+from constants import UARM_RT_FILTER_FREQ, UARM_RT_READ_TIMEOUT_US
 from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
 from constants import UARM_RT_STATUS_HZ, UARM_SERIAL_PORT
 from constants import USE_KINOVA_WRIST_CAMERA, WRIST_CAMERA_DEVICE, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH
@@ -132,6 +133,8 @@ class BridgeProcess:
             "--max-frame-delta-deg", str(self.args.max_frame_delta_deg),
             "--filter-freq", str(self.args.filter_freq),
             "--servoj-kp", str(self.args.servoj_kp),
+            "--uarm-deadband-deg", str(self.args.uarm_deadband_deg),
+            "--uarm-filter-alpha", str(self.args.uarm_filter_alpha),
             "--speed", str(self.args.speed),
             "--zone", str(self.args.zone),
             "--preset-joints-deg", csv(ER3PRO_TELEOP_PRESET_JOINT_DEG),
@@ -384,6 +387,8 @@ def main():
     parser.add_argument("--max-frame-delta-deg", type=float, default=UARM_MAX_FRAME_DELTA_DEG)
     parser.add_argument("--filter-freq", type=float, default=UARM_RT_FILTER_FREQ)
     parser.add_argument("--servoj-kp", type=float, default=UARM_RT_SERVOJ_KP)
+    parser.add_argument("--uarm-deadband-deg", type=float, default=UARM_RT_DEADBAND_DEG)
+    parser.add_argument("--uarm-filter-alpha", type=float, default=UARM_RT_FILTER_ALPHA)
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
