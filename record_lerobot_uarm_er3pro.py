@@ -153,7 +153,7 @@ class BridgeProcess:
             "--joint-offset-deg", csv(UARM_JOINT_OFFSET_DEG),
             "--joint-min-deg", csv(UARM_JOINT_LIMIT_DEG_MIN),
             "--joint-max-deg", csv(UARM_JOINT_LIMIT_DEG_MAX),
-            "--max-speed-deg", csv(UARM_MAX_JOINT_SPEED_DEG),
+            "--max-speed-deg", csv(np.asarray(self.args.max_speed_deg, dtype=np.float64)),
             "--gripper-open-deg", str(UARM_GRIPPER_OPEN_DEG),
             "--gripper-close-deg", str(UARM_GRIPPER_CLOSE_DEG),
             "--gripper-backend", ER3PRO_GRIPPER_BACKEND if ER3PRO_GRIPPER_BACKEND in ("di", "rs485_epg") else "rs485_epg",
@@ -450,6 +450,7 @@ def main():
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
+    parser.add_argument("--max-speed-deg", type=float, nargs=7, default=UARM_MAX_JOINT_SPEED_DEG.tolist())
     parser.add_argument("--dry-run", action="store_true", help="Start C++ bridge without connecting to robot")
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
