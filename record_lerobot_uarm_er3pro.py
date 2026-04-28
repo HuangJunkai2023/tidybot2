@@ -10,6 +10,14 @@ from pathlib import Path
 import numpy as np
 
 from constants import BASE_CAMERA_DEVICE, BASE_CAMERA_HEIGHT, BASE_CAMERA_WIDTH
+from constants import ER3PRO_ENABLE_GRIPPER, ER3PRO_GRIPPER_BACKEND, ER3PRO_GRIPPER_BOARD
+from constants import ER3PRO_GRIPPER_DI1_PORT, ER3PRO_GRIPPER_DI2_PORT
+from constants import ER3PRO_GRIPPER_RS485_CLOSE_POS, ER3PRO_GRIPPER_RS485_ENABLE_ON_START
+from constants import ER3PRO_GRIPPER_RS485_INIT_REG, ER3PRO_GRIPPER_RS485_INIT_VALUE
+from constants import ER3PRO_GRIPPER_RS485_OPEN_POS, ER3PRO_GRIPPER_RS485_POS_REG
+from constants import ER3PRO_GRIPPER_RS485_SLAVE_ID, ER3PRO_GRIPPER_RS485_SPEED
+from constants import ER3PRO_GRIPPER_RS485_TORQUE, ER3PRO_GRIPPER_RS485_TORQUE_REG
+from constants import ER3PRO_GRIPPER_THRESHOLD
 from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG, ER3PRO_UARM_RT_BIN
 from constants import LEROBOT_FPS, LEROBOT_REPO_ID, LEROBOT_ROOT, LEROBOT_TASK
@@ -20,7 +28,7 @@ from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_SPEED_DEG
 from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FILTER_ALPHA
 from constants import UARM_RT_FILTER_FREQ, UARM_RT_READ_TIMEOUT_US
 from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
-from constants import UARM_RT_STATUS_HZ, UARM_SERIAL_PORT
+from constants import UARM_RT_STATUS_HZ, UARM_RT_STEP_DEADBAND_DEG, UARM_SERIAL_PORT
 from constants import USE_KINOVA_WRIST_CAMERA, WRIST_CAMERA_DEVICE, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH
 
 
@@ -135,6 +143,7 @@ class BridgeProcess:
             "--servoj-kp", str(self.args.servoj_kp),
             "--uarm-deadband-deg", str(self.args.uarm_deadband_deg),
             "--uarm-filter-alpha", str(self.args.uarm_filter_alpha),
+            "--uarm-step-deadband-deg", str(self.args.uarm_step_deadband_deg),
             "--speed", str(self.args.speed),
             "--zone", str(self.args.zone),
             "--preset-joints-deg", csv(ER3PRO_TELEOP_PRESET_JOINT_DEG),
@@ -146,7 +155,25 @@ class BridgeProcess:
             "--max-speed-deg", csv(UARM_MAX_JOINT_SPEED_DEG),
             "--gripper-open-deg", str(UARM_GRIPPER_OPEN_DEG),
             "--gripper-close-deg", str(UARM_GRIPPER_CLOSE_DEG),
+            "--gripper-backend", ER3PRO_GRIPPER_BACKEND if ER3PRO_GRIPPER_BACKEND in ("di", "rs485_epg") else "rs485_epg",
+            "--gripper-threshold", str(ER3PRO_GRIPPER_THRESHOLD),
+            "--gripper-board", str(ER3PRO_GRIPPER_BOARD),
+            "--gripper-di1-port", str(ER3PRO_GRIPPER_DI1_PORT),
+            "--gripper-di2-port", str(ER3PRO_GRIPPER_DI2_PORT),
+            "--gripper-rs485-slave-id", str(ER3PRO_GRIPPER_RS485_SLAVE_ID),
+            "--gripper-rs485-init-reg", str(ER3PRO_GRIPPER_RS485_INIT_REG),
+            "--gripper-rs485-init-value", str(ER3PRO_GRIPPER_RS485_INIT_VALUE),
+            "--gripper-rs485-torque-reg", str(ER3PRO_GRIPPER_RS485_TORQUE_REG),
+            "--gripper-rs485-pos-reg", str(ER3PRO_GRIPPER_RS485_POS_REG),
+            "--gripper-rs485-open-pos", str(ER3PRO_GRIPPER_RS485_OPEN_POS),
+            "--gripper-rs485-close-pos", str(ER3PRO_GRIPPER_RS485_CLOSE_POS),
+            "--gripper-rs485-speed", str(ER3PRO_GRIPPER_RS485_SPEED),
+            "--gripper-rs485-torque", str(ER3PRO_GRIPPER_RS485_TORQUE),
         ]
+        if not ER3PRO_ENABLE_GRIPPER:
+            cmd.append("--disable-gripper")
+        if ER3PRO_GRIPPER_RS485_ENABLE_ON_START:
+            cmd.append("--gripper-rs485-enable-on-start")
         if self.args.local_ip:
             cmd.extend(["--local-ip", self.args.local_ip])
         if self.args.dry_run:
@@ -288,6 +315,9 @@ def create_lerobot_dataset(args, base_shape, wrist_shape):
         "image_writer_threads": 4,
         "image_writer_processes": 0,
     }
+    if root.exists():
+        print(f"Loading existing LeRobot dataset root: {root}", flush=True)
+        return call_with_supported_kwargs(LeRobotDataset, repo_id=args.repo_id, root=root)
     return call_with_supported_kwargs(LeRobotDataset.create, **kwargs)
 
 
@@ -389,6 +419,7 @@ def main():
     parser.add_argument("--servoj-kp", type=float, default=UARM_RT_SERVOJ_KP)
     parser.add_argument("--uarm-deadband-deg", type=float, default=UARM_RT_DEADBAND_DEG)
     parser.add_argument("--uarm-filter-alpha", type=float, default=UARM_RT_FILTER_ALPHA)
+    parser.add_argument("--uarm-step-deadband-deg", type=float, default=UARM_RT_STEP_DEADBAND_DEG)
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
