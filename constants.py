@@ -157,7 +157,8 @@ UARM_JOINT_SCALE = np.ones(7, dtype=np.float64)
 UARM_JOINT_OFFSET_DEG = np.zeros(7, dtype=np.float64)
 UARM_JOINT_LIMIT_DEG_MIN = np.array([-170.0, -120.0, -170.0, -170.0, -170.0, -170.0, -170.0], dtype=np.float64)
 UARM_JOINT_LIMIT_DEG_MAX = np.array([170.0, 120.0, 170.0, 170.0, 170.0, 170.0, 170.0], dtype=np.float64)
-UARM_MAX_JOINT_SPEED_DEG = np.array([360.0, 360.0, 360.0, 420.0, 420.0, 420.0, 420.0], dtype=np.float64)
+UARM_MAX_JOINT_SPEED_DEG = np.array([120.0, 120.0, 120.0, 160.0, 160.0, 160.0, 160.0], dtype=np.float64)
+UARM_MAX_JOINT_ACCEL_DEG = np.array([600.0, 600.0, 600.0, 800.0, 800.0, 800.0, 800.0], dtype=np.float64)
 UARM_MAX_FRAME_DELTA_DEG = 25.0
 UARM_GRIPPER_OPEN_DEG = 270.0
 UARM_GRIPPER_CLOSE_DEG = 0.0

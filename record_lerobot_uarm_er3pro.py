@@ -25,7 +25,7 @@ from constants import LEROBOT_FPS, LEROBOT_REPO_ID, LEROBOT_ROOT, LEROBOT_TASK
 from constants import UARM_BAUDRATE, UARM_GRIPPER_CLOSE_DEG, UARM_GRIPPER_OPEN_DEG
 from constants import UARM_JOINT_LIMIT_DEG_MAX, UARM_JOINT_LIMIT_DEG_MIN
 from constants import UARM_JOINT_OFFSET_DEG, UARM_JOINT_SCALE, UARM_JOINT_SIGN
-from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_SPEED_DEG
+from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_ACCEL_DEG, UARM_MAX_JOINT_SPEED_DEG
 from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FILTER_ALPHA
 from constants import UARM_RT_FILTER_FREQ, UARM_RT_READ_TIMEOUT_US
 from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
@@ -154,6 +154,7 @@ class BridgeProcess:
             "--joint-min-deg", csv(UARM_JOINT_LIMIT_DEG_MIN),
             "--joint-max-deg", csv(UARM_JOINT_LIMIT_DEG_MAX),
             "--max-speed-deg", csv(np.asarray(self.args.max_speed_deg, dtype=np.float64)),
+            "--max-accel-deg", csv(np.asarray(self.args.max_accel_deg, dtype=np.float64)),
             "--gripper-open-deg", str(UARM_GRIPPER_OPEN_DEG),
             "--gripper-close-deg", str(UARM_GRIPPER_CLOSE_DEG),
             "--gripper-backend", ER3PRO_GRIPPER_BACKEND if ER3PRO_GRIPPER_BACKEND in ("di", "rs485_epg") else "rs485_epg",
@@ -451,6 +452,7 @@ def main():
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
     parser.add_argument("--max-speed-deg", type=float, nargs=7, default=UARM_MAX_JOINT_SPEED_DEG.tolist())
+    parser.add_argument("--max-accel-deg", type=float, nargs=7, default=UARM_MAX_JOINT_ACCEL_DEG.tolist())
     parser.add_argument("--dry-run", action="store_true", help="Start C++ bridge without connecting to robot")
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
