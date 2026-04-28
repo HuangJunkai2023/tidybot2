@@ -111,6 +111,7 @@ ER3PRO_GRIPPER_USB_OPEN_POS = 0
 ER3PRO_GRIPPER_USB_CLOSE_POS = 255
 ER3PRO_GRIPPER_USB_MIN_CMD_INTERVAL = 0.08
 ER3PRO_CPP_BRIDGE_BIN = '../xCoreSDK_cpp-v0.7.1/build/bin/arm_bridge'
+ER3PRO_UARM_RT_BIN = '../xCoreSDK_cpp-v0.7.1/build/bin/uarm_er3pro_rt'
 ER3PRO_FOLLOW_SCALE = 0.8   # FollowPosition speed scale in [0,1], larger -> more responsive
 ER3PRO_RT_FILTER_FREQ = 15.0 # Hz, larger -> less lag, smaller -> smoother
 ER3PRO_MAX_POS_SPEED = 0.18   # m/s
@@ -160,3 +161,18 @@ UARM_MAX_JOINT_SPEED_DEG = np.array([90.0, 90.0, 90.0, 120.0, 120.0, 120.0, 120.
 UARM_MAX_FRAME_DELTA_DEG = 25.0
 UARM_GRIPPER_OPEN_DEG = 270.0
 UARM_GRIPPER_CLOSE_DEG = 0.0
+
+################################################################################
+# LeRobot UArm -> ER3Pro recording
+
+LEROBOT_REPO_ID = 'local/uarm_er3pro'
+LEROBOT_ROOT = 'data/lerobot_uarm_er3pro'
+LEROBOT_TASK = 'uarm_er3pro_teleop'
+LEROBOT_FPS = 10
+UARM_RT_SERVO_PERIOD_MS = 20.0
+UARM_RT_STATUS_HZ = 10.0
+UARM_RT_READ_TIMEOUT_US = 5000
+UARM_RT_COMMAND_DELAY_US = 1000
+UARM_RT_STALE_TIMEOUT = 0.30
+UARM_RT_FILTER_FREQ = 50.0
+UARM_RT_SERVOJ_KP = 1.0
