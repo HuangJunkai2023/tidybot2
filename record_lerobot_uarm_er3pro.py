@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -277,6 +278,25 @@ def call_with_supported_kwargs(fn, **kwargs):
     return fn(**filtered)
 
 
+def is_complete_lerobot_root(root):
+    meta_dir = root / "meta"
+    return (
+        (meta_dir / "info.json").exists()
+        and (meta_dir / "tasks.parquet").exists()
+        and (meta_dir / "episodes.parquet").exists()
+    )
+
+
+def unique_lerobot_root(root):
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    candidate = root.with_name(f"{root.name}_{stamp}")
+    idx = 1
+    while candidate.exists():
+        candidate = root.with_name(f"{root.name}_{stamp}_{idx}")
+        idx += 1
+    return candidate
+
+
 def create_lerobot_dataset(args, base_shape, wrist_shape):
     LeRobotDataset = import_lerobot_dataset()
     features = {
@@ -316,8 +336,15 @@ def create_lerobot_dataset(args, base_shape, wrist_shape):
         "image_writer_processes": 0,
     }
     if root.exists():
-        print(f"Loading existing LeRobot dataset root: {root}", flush=True)
-        return call_with_supported_kwargs(LeRobotDataset, repo_id=args.repo_id, root=root)
+        if is_complete_lerobot_root(root):
+            print(f"Loading existing LeRobot dataset root: {root}", flush=True)
+            return call_with_supported_kwargs(LeRobotDataset, repo_id=args.repo_id, root=root)
+        new_root = unique_lerobot_root(root)
+        print(
+            f"Existing LeRobot root is incomplete, creating a new root instead: {new_root}",
+            flush=True,
+        )
+        kwargs["root"] = new_root
     return call_with_supported_kwargs(LeRobotDataset.create, **kwargs)
 
 
