@@ -20,6 +20,7 @@ from constants import ER3PRO_GRIPPER_RS485_SLAVE_ID, ER3PRO_GRIPPER_RS485_SPEED
 from constants import ER3PRO_GRIPPER_RS485_TORQUE, ER3PRO_GRIPPER_RS485_TORQUE_REG
 from constants import ER3PRO_GRIPPER_THRESHOLD
 from constants import ER3PRO_IP, ER3PRO_LOCAL_IP, ER3PRO_MOVE_VELOCITY, ER3PRO_MOVE_ZONE
+from constants import ER3PRO_RT_COLLISION_THRESHOLDS
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG, ER3PRO_UARM_RT_BIN
 from constants import LEROBOT_FPS, LEROBOT_REPO_ID, LEROBOT_ROOT, LEROBOT_TASK
 from constants import UARM_BAUDRATE, UARM_GRIPPER_CLOSE_DEG, UARM_GRIPPER_OPEN_DEG
@@ -162,6 +163,7 @@ class BridgeProcess:
             "--joint-max-deg", csv(UARM_JOINT_LIMIT_DEG_MAX),
             "--max-speed-deg", csv(np.asarray(self.args.max_speed_deg, dtype=np.float64)),
             "--max-accel-deg", csv(np.asarray(self.args.max_accel_deg, dtype=np.float64)),
+            "--rt-collision-thresholds", csv(np.asarray(self.args.rt_collision_thresholds, dtype=np.float64)),
             "--gripper-open-deg", str(UARM_GRIPPER_OPEN_DEG),
             "--gripper-close-deg", str(UARM_GRIPPER_CLOSE_DEG),
             "--gripper-backend", ER3PRO_GRIPPER_BACKEND if ER3PRO_GRIPPER_BACKEND in ("di", "rs485_epg") else "rs485_epg",
@@ -485,6 +487,7 @@ def main():
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
     parser.add_argument("--max-speed-deg", type=float, nargs=7, default=UARM_MAX_JOINT_SPEED_DEG.tolist())
     parser.add_argument("--max-accel-deg", type=float, nargs=7, default=UARM_MAX_JOINT_ACCEL_DEG.tolist())
+    parser.add_argument("--rt-collision-thresholds", type=float, nargs=7, default=ER3PRO_RT_COLLISION_THRESHOLDS.tolist())
     parser.add_argument("--dry-run", action="store_true", help="Start C++ bridge without connecting to robot")
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
