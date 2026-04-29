@@ -28,7 +28,7 @@ from constants import UARM_JOINT_OFFSET_DEG, UARM_JOINT_SCALE, UARM_JOINT_SIGN
 from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_ACCEL_DEG, UARM_MAX_JOINT_SPEED_DEG
 from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FILTER_ALPHA
 from constants import UARM_RT_FILTER_FREQ, UARM_RT_INTERP_HZ, UARM_RT_INTERP_STEPS, UARM_RT_READ_TIMEOUT_US
-from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
+from constants import UARM_RT_ROBOT_TARGET_FILTER_HZ, UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
 from constants import UARM_RT_STATUS_HZ, UARM_RT_STEP_DEADBAND_DEG, UARM_SERIAL_PORT
 from constants import USE_KINOVA_WRIST_CAMERA, WRIST_CAMERA_DEVICE, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH
 
@@ -117,6 +117,7 @@ class BridgeProcess:
         self.proc = None
         self.stdout_thread = None
         self.stderr_thread = None
+        self.last_uarm_print_time = 0.0
         if not args.no_robot:
             self._start()
         else:
@@ -147,6 +148,7 @@ class BridgeProcess:
             "--uarm-step-deadband-deg", str(self.args.uarm_step_deadband_deg),
             "--uarm-interp-steps", str(self.args.uarm_interp_steps),
             "--uarm-interp-hz", str(self.args.uarm_interp_hz),
+            "--robot-target-filter-hz", str(self.args.robot_target_filter_hz),
             "--speed", str(self.args.speed),
             "--zone", str(self.args.zone),
             "--preset-joints-deg", csv(ER3PRO_TELEOP_PRESET_JOINT_DEG),
@@ -202,7 +204,25 @@ class BridgeProcess:
 
     def _stdout_loop(self):
         for line in self.proc.stdout:
-            self.state.update_from_line(line.strip())
+            line = line.strip()
+            self.state.update_from_line(line)
+            if line.startswith("STATE"):
+                self._maybe_print_uarm_angles()
+
+    def _maybe_print_uarm_angles(self):
+        if not self.args.print_uarm_angles:
+            return
+        now = time.time()
+        period = 1.0 / max(float(self.args.uarm_print_hz), 0.1)
+        if now - self.last_uarm_print_time < period:
+            return
+        self.last_uarm_print_time = now
+        snap = self.state.snapshot()
+        angles = " ".join(f"s{i}:{angle:.1f}" for i, angle in enumerate(snap["uarm_deg"]))
+        print(
+            f"UARM {angles} age_ms:{snap['uarm_age_ms']:.1f} period_ms:{snap['uarm_period_ms']:.1f}",
+            flush=True,
+        )
 
     def _stderr_loop(self):
         for line in self.proc.stderr:
@@ -454,6 +474,7 @@ def main():
     parser.add_argument("--uarm-step-deadband-deg", type=float, default=UARM_RT_STEP_DEADBAND_DEG)
     parser.add_argument("--uarm-interp-steps", type=int, default=UARM_RT_INTERP_STEPS)
     parser.add_argument("--uarm-interp-hz", type=float, default=UARM_RT_INTERP_HZ)
+    parser.add_argument("--robot-target-filter-hz", type=float, default=UARM_RT_ROBOT_TARGET_FILTER_HZ)
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
@@ -463,6 +484,8 @@ def main():
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
     parser.add_argument("--use-preset", action="store_true", help="Move ER3Pro to ER3PRO_TELEOP_PRESET_JOINT_DEG before realtime teleop")
+    parser.add_argument("--print-uarm-angles", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--uarm-print-hz", type=float, default=UARM_RT_STATUS_HZ)
     parser.add_argument("--dummy-cameras", action="store_true")
     parser.add_argument("--auto-seconds", type=float, default=0.0, help="Record one episode for N seconds, then save and exit")
     args = parser.parse_args()
