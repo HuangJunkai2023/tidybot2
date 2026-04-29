@@ -145,6 +145,8 @@ class BridgeProcess:
             "--uarm-deadband-deg", str(self.args.uarm_deadband_deg),
             "--uarm-filter-alpha", str(self.args.uarm_filter_alpha),
             "--uarm-step-deadband-deg", str(self.args.uarm_step_deadband_deg),
+            "--uarm-interp-steps", str(self.args.uarm_interp_steps),
+            "--uarm-interp-hz", str(self.args.uarm_interp_hz),
             "--speed", str(self.args.speed),
             "--zone", str(self.args.zone),
             "--preset-joints-deg", csv(ER3PRO_TELEOP_PRESET_JOINT_DEG),
@@ -182,6 +184,8 @@ class BridgeProcess:
             cmd.append("--dry-run")
         if self.args.skip_preset:
             cmd.append("--skip-preset")
+        if self.args.use_preset:
+            cmd.append("--use-preset")
 
         self.proc = subprocess.Popen(
             cmd,
@@ -448,6 +452,8 @@ def main():
     parser.add_argument("--uarm-deadband-deg", type=float, default=UARM_RT_DEADBAND_DEG)
     parser.add_argument("--uarm-filter-alpha", type=float, default=UARM_RT_FILTER_ALPHA)
     parser.add_argument("--uarm-step-deadband-deg", type=float, default=UARM_RT_STEP_DEADBAND_DEG)
+    parser.add_argument("--uarm-interp-steps", type=int, default=UARM_RT_INTERP_STEPS)
+    parser.add_argument("--uarm-interp-hz", type=float, default=UARM_RT_INTERP_HZ)
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
@@ -456,6 +462,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Start C++ bridge without connecting to robot")
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
+    parser.add_argument("--use-preset", action="store_true", help="Move ER3Pro to ER3PRO_TELEOP_PRESET_JOINT_DEG before realtime teleop")
     parser.add_argument("--dummy-cameras", action="store_true")
     parser.add_argument("--auto-seconds", type=float, default=0.0, help="Record one episode for N seconds, then save and exit")
     args = parser.parse_args()
