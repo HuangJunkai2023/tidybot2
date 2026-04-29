@@ -31,7 +31,7 @@ from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FI
 from constants import UARM_RT_FILTER_FREQ, UARM_RT_INTERP_HZ, UARM_RT_INTERP_STEPS, UARM_RT_READ_TIMEOUT_US
 from constants import UARM_RT_ROBOT_INTERP_MS, UARM_RT_ROBOT_TARGET_DEADBAND_DEG, UARM_RT_ROBOT_TARGET_FILTER_HZ
 from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
-from constants import UARM_RT_STATUS_HZ, UARM_RT_STEP_DEADBAND_DEG, UARM_SERIAL_PORT
+from constants import UARM_RT_STATUS_HZ, UARM_RT_STEP_DEADBAND_DEG, UARM_SERIAL_PORT, UARM_SERIAL_PORT_B
 from constants import USE_KINOVA_WRIST_CAMERA, WRIST_CAMERA_DEVICE, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH
 
 
@@ -136,6 +136,7 @@ class BridgeProcess:
             str(bridge_path),
             "--robot-ip", self.args.robot_ip,
             "--uarm-port", self.args.uarm_port,
+            "--uarm-port-b", self.args.uarm_port_b,
             "--uarm-baud", str(self.args.uarm_baud),
             "--read-timeout-us", str(self.args.read_timeout_us),
             "--uarm-command-delay-us", str(self.args.uarm_command_delay_us),
@@ -465,6 +466,7 @@ def main():
     parser.add_argument("--robot-ip", default=ER3PRO_IP)
     parser.add_argument("--local-ip", default=ER3PRO_LOCAL_IP)
     parser.add_argument("--uarm-port", default=UARM_SERIAL_PORT)
+    parser.add_argument("--uarm-port-b", default=UARM_SERIAL_PORT_B)
     parser.add_argument("--uarm-baud", type=int, default=UARM_BAUDRATE)
     parser.add_argument("--read-timeout-us", type=int, default=UARM_RT_READ_TIMEOUT_US)
     parser.add_argument("--uarm-command-delay-us", type=int, default=UARM_RT_COMMAND_DELAY_US)
