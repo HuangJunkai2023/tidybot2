@@ -30,6 +30,7 @@ from constants import UARM_MAX_FRAME_DELTA_DEG, UARM_MAX_JOINT_ACCEL_DEG, UARM_M
 from constants import UARM_RT_COMMAND_DELAY_US, UARM_RT_DEADBAND_DEG, UARM_RT_FILTER_ALPHA
 from constants import UARM_RT_FILTER_FREQ, UARM_RT_INTERP_HZ, UARM_RT_INTERP_STEPS, UARM_RT_READ_TIMEOUT_US
 from constants import UARM_RT_ROBOT_INTERP_MS, UARM_RT_ROBOT_TARGET_DEADBAND_DEG, UARM_RT_ROBOT_TARGET_FILTER_HZ
+from constants import UARM_RT_CONTROL_MODE, UARM_RT_JOINT_IMPEDANCE
 from constants import UARM_RT_SERVO_PERIOD_MS, UARM_RT_SERVOJ_KP, UARM_RT_STALE_TIMEOUT
 from constants import UARM_RT_STATUS_HZ, UARM_RT_STEP_DEADBAND_DEG, UARM_SERIAL_PORT, UARM_SERIAL_PORT_B
 from constants import USE_KINOVA_WRIST_CAMERA, WRIST_CAMERA_DEVICE, WRIST_CAMERA_HEIGHT, WRIST_CAMERA_WIDTH
@@ -154,6 +155,7 @@ class BridgeProcess:
             "--robot-target-filter-hz", str(self.args.robot_target_filter_hz),
             "--robot-target-deadband-deg", str(self.args.robot_target_deadband_deg),
             "--robot-interp-ms", str(self.args.robot_interp_ms),
+            "--rt-control-mode", self.args.rt_control_mode,
             "--speed", str(self.args.speed),
             "--zone", str(self.args.zone),
             "--preset-joints-deg", csv(ER3PRO_TELEOP_PRESET_JOINT_DEG),
@@ -164,6 +166,7 @@ class BridgeProcess:
             "--joint-max-deg", csv(UARM_JOINT_LIMIT_DEG_MAX),
             "--max-speed-deg", csv(np.asarray(self.args.max_speed_deg, dtype=np.float64)),
             "--max-accel-deg", csv(np.asarray(self.args.max_accel_deg, dtype=np.float64)),
+            "--joint-impedance", csv(np.asarray(self.args.joint_impedance, dtype=np.float64)),
             "--rt-collision-thresholds", csv(np.asarray(self.args.rt_collision_thresholds, dtype=np.float64)),
             "--gripper-open-deg", str(UARM_GRIPPER_OPEN_DEG),
             "--gripper-close-deg", str(UARM_GRIPPER_CLOSE_DEG),
@@ -484,11 +487,13 @@ def main():
     parser.add_argument("--robot-target-filter-hz", type=float, default=UARM_RT_ROBOT_TARGET_FILTER_HZ)
     parser.add_argument("--robot-target-deadband-deg", type=float, default=UARM_RT_ROBOT_TARGET_DEADBAND_DEG)
     parser.add_argument("--robot-interp-ms", type=float, default=UARM_RT_ROBOT_INTERP_MS)
+    parser.add_argument("--rt-control-mode", choices=("joint_position", "joint_impedance"), default=UARM_RT_CONTROL_MODE)
     parser.add_argument("--speed", type=float, default=ER3PRO_MOVE_VELOCITY)
     parser.add_argument("--zone", type=float, default=ER3PRO_MOVE_ZONE)
     parser.add_argument("--joint-scale", type=float, nargs=7, default=UARM_JOINT_SCALE.tolist())
     parser.add_argument("--max-speed-deg", type=float, nargs=7, default=UARM_MAX_JOINT_SPEED_DEG.tolist())
     parser.add_argument("--max-accel-deg", type=float, nargs=7, default=UARM_MAX_JOINT_ACCEL_DEG.tolist())
+    parser.add_argument("--joint-impedance", type=float, nargs=7, default=UARM_RT_JOINT_IMPEDANCE.tolist())
     parser.add_argument("--rt-collision-thresholds", type=float, nargs=7, default=ER3PRO_RT_COLLISION_THRESHOLDS.tolist())
     parser.add_argument("--dry-run", action="store_true", help="Start C++ bridge without connecting to robot")
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
