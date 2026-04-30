@@ -333,16 +333,18 @@ def unique_lerobot_root(root):
 
 def create_lerobot_dataset(args, base_shape, wrist_shape):
     LeRobotDataset = import_lerobot_dataset()
+    base_h, base_w, base_c = base_shape
+    wrist_h, wrist_w, wrist_c = wrist_shape
     features = {
         "observation.images.base": {
-            "dtype": "image",
-            "shape": tuple(base_shape),
-            "names": ["height", "width", "channels"],
+            "dtype": "video",
+            "shape": (base_c, base_h, base_w),
+            "names": ["channels", "height", "width"],
         },
         "observation.images.wrist": {
-            "dtype": "image",
-            "shape": tuple(wrist_shape),
-            "names": ["height", "width", "channels"],
+            "dtype": "video",
+            "shape": (wrist_c, wrist_h, wrist_w),
+            "names": ["channels", "height", "width"],
         },
         "observation.state": {
             "dtype": "float32",
@@ -368,6 +370,7 @@ def create_lerobot_dataset(args, base_shape, wrist_shape):
         "use_videos": True,
         "image_writer_threads": 4,
         "image_writer_processes": 0,
+        "vcodec": args.video_codec,
     }
     if root.exists():
         if is_complete_lerobot_root(root):
@@ -501,6 +504,7 @@ def main():
     parser.add_argument("--use-preset", action="store_true", help="Move ER3Pro to ER3PRO_TELEOP_PRESET_JOINT_DEG before realtime teleop")
     parser.add_argument("--print-uarm-angles", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--uarm-print-hz", type=float, default=UARM_RT_STATUS_HZ)
+    parser.add_argument("--video-codec", default="h264", help="LeRobot video codec, e.g. h264, hevc, libsvtav1, auto")
     parser.add_argument("--dummy-cameras", action="store_true")
     parser.add_argument("--auto-seconds", type=float, default=0.0, help="Record one episode for N seconds, then save and exit")
     args = parser.parse_args()
