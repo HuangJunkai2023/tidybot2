@@ -378,14 +378,14 @@ def create_lerobot_dataset(args, base_shape, wrist_shape):
         "vcodec": args.video_codec,
     }
     if root.exists():
-        if is_complete_lerobot_root(root):
+        if args.resume_existing and is_complete_lerobot_root(root):
             print(f"Loading existing LeRobot dataset root: {root}", flush=True)
             return call_with_supported_kwargs(LeRobotDataset, repo_id=args.repo_id, root=root)
         new_root = unique_lerobot_root(root)
-        print(
-            f"Existing LeRobot root is incomplete, creating a new root instead: {new_root}",
-            flush=True,
-        )
+        if args.resume_existing:
+            print(f"Existing LeRobot root is incomplete, creating a new root instead: {new_root}", flush=True)
+        else:
+            print(f"Existing LeRobot root found, creating a new root instead: {new_root}", flush=True)
         kwargs["root"] = new_root
     return call_with_supported_kwargs(LeRobotDataset.create, **kwargs)
 
@@ -454,7 +454,10 @@ def key_ready():
 def read_key_line():
     if not key_ready():
         return None
-    return sys.stdin.readline().rstrip("\n")
+    line = sys.stdin.readline()
+    if line == "":
+        return "q"
+    return line.rstrip("\n")
 
 
 def build_frame(snap, base_image, wrist_image, task):
@@ -530,6 +533,7 @@ def main():
     parser.add_argument("--print-uarm-angles", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--uarm-print-hz", type=float, default=UARM_RT_STATUS_HZ)
     parser.add_argument("--video-codec", default="h264", help="LeRobot video codec, e.g. h264, hevc, libsvtav1, auto")
+    parser.add_argument("--resume-existing", action="store_true", help="Append to --root instead of creating a timestamped root when it already exists")
     parser.add_argument("--dummy-cameras", action="store_true")
     parser.add_argument("--auto-seconds", type=float, default=0.0, help="Record one episode for N seconds, then save and exit")
     args = parser.parse_args()
