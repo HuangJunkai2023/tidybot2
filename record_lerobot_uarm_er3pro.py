@@ -499,7 +499,7 @@ def main():
     parser.add_argument("--no-robot", action="store_true", help="Do not start C++ bridge; record synthetic robot state")
     parser.add_argument("--skip-preset", action="store_true")
     parser.add_argument("--use-preset", action="store_true", help="Move ER3Pro to ER3PRO_TELEOP_PRESET_JOINT_DEG before realtime teleop")
-    parser.add_argument("--print-uarm-angles", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--print-uarm-angles", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--uarm-print-hz", type=float, default=UARM_RT_STATUS_HZ)
     parser.add_argument("--dummy-cameras", action="store_true")
     parser.add_argument("--auto-seconds", type=float, default=0.0, help="Record one episode for N seconds, then save and exit")
