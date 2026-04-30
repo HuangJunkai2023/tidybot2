@@ -318,10 +318,11 @@ def call_with_supported_kwargs(fn, **kwargs):
 
 def is_complete_lerobot_root(root):
     meta_dir = root / "meta"
+    episode_files = list((meta_dir / "episodes").glob("chunk-*/*.parquet"))
     return (
         (meta_dir / "info.json").exists()
         and (meta_dir / "tasks.parquet").exists()
-        and (meta_dir / "episodes.parquet").exists()
+        and ((meta_dir / "episodes.parquet").exists() or bool(episode_files))
     )
 
 
@@ -398,6 +399,26 @@ def save_episode(dataset, task):
         dataset.save_episode(task=task)
     except TypeError:
         dataset.save_episode()
+
+
+def flush_saved_episode(dataset):
+    if hasattr(dataset, "_close_writer"):
+        dataset._close_writer()
+        if hasattr(dataset, "_writer_closed_for_reading"):
+            dataset._writer_closed_for_reading = True
+    meta = getattr(dataset, "meta", None)
+    if meta is not None and hasattr(meta, "_close_writer"):
+        meta._close_writer()
+        latest = getattr(meta, "latest_episode", None)
+        if latest is not None:
+            chunks_size = int(getattr(meta, "chunks_size", 1000))
+            chunk_idx = int(latest["meta/episodes/chunk_index"][0])
+            file_idx = int(latest["meta/episodes/file_index"][0]) + 1
+            if file_idx >= chunks_size:
+                chunk_idx += 1
+                file_idx = 0
+            latest["meta/episodes/chunk_index"][0] = chunk_idx
+            latest["meta/episodes/file_index"][0] = file_idx
 
 
 def finalize_dataset(dataset):
@@ -553,6 +574,7 @@ def main():
         def finish_episode():
             nonlocal bridge, recording
             save_episode(dataset, args.task)
+            flush_saved_episode(dataset)
             recording = False
             if bridge is not None:
                 bridge.close()
@@ -581,9 +603,8 @@ def main():
                 elif cmd == "d" and recording:
                     discard_episode()
                 elif cmd == "q":
-                    if recording and bridge is not None:
-                        bridge.close()
-                        bridge = None
+                    if recording:
+                        discard_episode()
                     break
 
             if not recording:
