@@ -163,7 +163,7 @@ UARM_MAX_JOINT_ACCEL_DEG = np.array([240.0, 240.0, 240.0, 360.0, 360.0, 360.0, 3
 ER3PRO_RT_COLLISION_THRESHOLDS = np.array([75.0, 75.0, 60.0, 45.0, 30.0, 30.0, 20.0], dtype=np.float64)
 UARM_MAX_FRAME_DELTA_DEG = 90.0
 UARM_GRIPPER_OPEN_DEG = 0.0
-UARM_GRIPPER_CLOSE_DEG = 270.0
+UARM_GRIPPER_CLOSE_DEG = 40.0
 
 ################################################################################
 # LeRobot UArm -> ER3Pro recording
