@@ -114,19 +114,21 @@ class LatestBridgeState:
 
 
 class BridgeProcess:
-    def __init__(self, args):
+    def __init__(self, args, autostart=True):
         self.args = args
         self.state = LatestBridgeState()
         self.proc = None
         self.stdout_thread = None
         self.stderr_thread = None
         self.last_uarm_print_time = 0.0
-        if not args.no_robot:
+        if autostart and not args.no_robot:
             self._start()
-        else:
+        elif args.no_robot:
             self.state.ready = True
 
     def _start(self):
+        if self.proc is not None and self.proc.poll() is None:
+            return
         bridge_path = Path(self.args.bridge_bin)
         if not bridge_path.is_absolute():
             bridge_path = Path(__file__).resolve().parent / bridge_path
@@ -277,6 +279,8 @@ class BridgeProcess:
                 self.proc.wait(timeout=3.0)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.wait(timeout=1.0)
+        self.proc = None
 
 
 def csv(values):
@@ -514,7 +518,6 @@ def main():
     wrist_camera = None
     dataset = None
     try:
-        bridge = BridgeProcess(args)
         base_camera = make_camera(BASE_CAMERA_DEVICE, BASE_CAMERA_WIDTH, BASE_CAMERA_HEIGHT, dummy=args.dummy_cameras)
         wrist_camera = (
             __import__("cameras", fromlist=["KinovaCamera"]).KinovaCamera()
@@ -526,7 +529,10 @@ def main():
         dataset = create_lerobot_dataset(args, base_image.shape, wrist_image.shape)
 
         print("READY")
-        print("Press Enter to start, s+Enter to save, d+Enter to discard, q+Enter to quit.", flush=True)
+        print(
+            "Press Enter to start/stop an episode, d+Enter to discard, q+Enter to quit.",
+            flush=True,
+        )
 
         recording = False
         episode_frames = 0
@@ -534,27 +540,50 @@ def main():
         auto_end_time = None
         last_status_time = 0.0
 
+        def start_episode():
+            nonlocal bridge, recording, episode_frames, next_frame_time, auto_end_time, last_status_time
+            bridge = BridgeProcess(args)
+            recording = True
+            episode_frames = 0
+            next_frame_time = time.monotonic()
+            auto_end_time = time.monotonic() + args.auto_seconds if args.auto_seconds > 0 else None
+            last_status_time = 0.0
+            print("EPISODE_STARTED", flush=True)
+
+        def finish_episode():
+            nonlocal bridge, recording
+            save_episode(dataset, args.task)
+            recording = False
+            if bridge is not None:
+                bridge.close()
+                bridge = None
+            print(f"EPISODE_SAVED frames={episode_frames}", flush=True)
+
+        def discard_episode():
+            nonlocal bridge, recording
+            if hasattr(dataset, "clear_episode_buffer"):
+                dataset.clear_episode_buffer()
+            else:
+                print("Warning: this LeRobot version has no clear_episode_buffer(); restart if discard is required.", flush=True)
+            recording = False
+            if bridge is not None:
+                bridge.close()
+                bridge = None
+            print(f"EPISODE_DISCARDED frames={episode_frames}", flush=True)
+
         while True:
             cmd = read_key_line()
             if cmd is not None:
                 if cmd == "" and not recording:
-                    recording = True
-                    episode_frames = 0
-                    next_frame_time = time.monotonic()
-                    auto_end_time = time.monotonic() + args.auto_seconds if args.auto_seconds > 0 else None
-                    print("EPISODE_STARTED", flush=True)
-                elif cmd == "s" and recording:
-                    save_episode(dataset, args.task)
-                    recording = False
-                    print(f"EPISODE_SAVED frames={episode_frames}", flush=True)
+                    start_episode()
+                elif cmd in ("", "s") and recording:
+                    finish_episode()
                 elif cmd == "d" and recording:
-                    if hasattr(dataset, "clear_episode_buffer"):
-                        dataset.clear_episode_buffer()
-                    else:
-                        print("Warning: this LeRobot version has no clear_episode_buffer(); restart if discard is required.", flush=True)
-                    recording = False
-                    print(f"EPISODE_DISCARDED frames={episode_frames}", flush=True)
+                    discard_episode()
                 elif cmd == "q":
+                    if recording and bridge is not None:
+                        bridge.close()
+                        bridge = None
                     break
 
             if not recording:
@@ -563,8 +592,7 @@ def main():
 
             now = time.monotonic()
             if auto_end_time is not None and now >= auto_end_time:
-                save_episode(dataset, args.task)
-                print(f"EPISODE_SAVED frames={episode_frames}", flush=True)
+                finish_episode()
                 break
             if now < next_frame_time:
                 time.sleep(min(0.002, next_frame_time - now))
