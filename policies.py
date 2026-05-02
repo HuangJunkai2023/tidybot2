@@ -629,6 +629,10 @@ class RemotePolicy(TeleopPolicy):
             self.enabled = False
             self._connect_socket()
             return None
+        if 'error' in rep:
+            print(f"Warning: Policy server error: {rep['error']}")
+            self.enabled = False
+            return None
         action = rep.get('action')
         self.profile_step_count += 1
         self.profile_rtt_total_ms += rtt_ms

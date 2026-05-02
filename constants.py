@@ -139,8 +139,8 @@ POLICY_SERVER_HOST = '192.168.1.101' # 'localhost' or IP address of remote polic
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 20
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
-POLICY_IMAGE_WIDTH = 84
-POLICY_IMAGE_HEIGHT = 84
+POLICY_IMAGE_WIDTH = 320
+POLICY_IMAGE_HEIGHT = 240
 
 ################################################################################
 # U-Arm teleoperation
