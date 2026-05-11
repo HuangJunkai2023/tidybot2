@@ -15,7 +15,10 @@ import hydra
 import numpy as np
 import torch
 import zmq
-from constants import POLICY_CONTROL_PERIOD
+try:
+    from constants import POLICY_CONTROL_PERIOD
+except ImportError:
+    POLICY_CONTROL_PERIOD = 0.05  # 20 Hz fallback when copied into diffusion_policy
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.model.common.rotation_transformer import RotationTransformer
 
@@ -61,6 +64,9 @@ class DiffusionPolicy:
         self.profile_infer_count = 0
         self.profile_infer_total_ms = 0.0
         self.profile_infer_max_ms = 0.0
+        print('[policy_server] checkpoint observation shapes:')
+        for key, value in self.obs_shape_meta.items():
+            print(f'  {key}: type={value.get("type", "low_dim")} shape={list(value["shape"])}')
 
     def reset(self):
         self.policy.reset()
@@ -102,17 +108,54 @@ class DiffusionPolicy:
     def _convert_obs(self, obs_sequence):
         obs_dict_np = {}
         for key, value in self.obs_shape_meta.items():
+            if key not in obs_sequence[-1]:
+                raise KeyError(f'Missing observation key required by checkpoint: {key}')
+
             if value.get('type') == 'rgb':
-                images = np.stack([obs[key] for obs in obs_sequence], axis=0)
+                target_shape = tuple(value['shape'])
+                images = np.stack(
+                    [self._prepare_rgb_obs(obs[key], target_shape, key) for obs in obs_sequence],
+                    axis=0,
+                )
                 assert images.dtype == np.uint8
                 images = images.astype(np.float32) / 255.0
                 images = np.transpose(images, (0, 3, 1, 2))
-                assert images.shape[1:] == tuple(value['shape'])
+                if images.shape[1:] != target_shape:
+                    raise ValueError(f'{key} shape {images.shape[1:]} != {target_shape}')
                 obs_dict_np[key] = images
             else:
-                obs_dict_np[key] = np.stack([obs[key] for obs in obs_sequence], axis=0).astype(np.float32)
+                values = np.stack([obs[key] for obs in obs_sequence], axis=0).astype(np.float32)
+                expected_shape = tuple(value['shape'])
+                if values.shape[1:] != expected_shape:
+                    raise ValueError(f'{key} shape {values.shape[1:]} != {expected_shape}')
+                obs_dict_np[key] = values
         obs_dict = dict_apply(obs_dict_np, lambda x: torch.from_numpy(x).unsqueeze(0).to(self.device))
         return obs_dict
+
+    @staticmethod
+    def _prepare_rgb_obs(image, target_chw_shape, key):
+        if len(target_chw_shape) != 3 or target_chw_shape[0] != 3:
+            raise ValueError(f'{key} expected RGB CHW shape [3, H, W], got {target_chw_shape}')
+
+        image = np.asarray(image)
+        target_h, target_w = target_chw_shape[1], target_chw_shape[2]
+
+        if image.ndim == 3 and image.shape[0] == 3 and image.shape[2] != 3:
+            image = np.transpose(image, (1, 2, 0))
+
+        if image.ndim != 3 or image.shape[2] != 3:
+            raise ValueError(f'{key} expected HWC RGB image, got shape {image.shape}')
+
+        if image.dtype != np.uint8:
+            if np.issubdtype(image.dtype, np.floating) and image.max(initial=0.0) <= 1.0:
+                image = np.clip(image * 255.0, 0, 255).astype(np.uint8)
+            else:
+                image = np.clip(image, 0, 255).astype(np.uint8)
+
+        if image.shape[:2] != (target_h, target_w):
+            image = cv.resize(image, (target_w, target_h), interpolation=cv.INTER_AREA)
+
+        return np.ascontiguousarray(image)
 
     def _convert_action(self, action):
         act_sequence = []
@@ -136,14 +179,21 @@ class PolicyWrapper:
         self.profile_infer_trigger_count = 0
         self.profile_idle_count = 0
         self.profile_backlog_count = 0
+        self.last_error = None
 
         # Start inference loop
         threading.Thread(target=self.inference_loop, args=(policy,), daemon=True).start()
 
     def reset(self):
+        self.last_error = None
         self.obs_queue.put('reset')
 
     def step(self, obs):
+        if self.last_error is not None:
+            error = self.last_error
+            self.last_error = None
+            raise RuntimeError(f'Policy inference loop failed: {error}')
+
         self.obs_queue.put(obs)
         action = None if self.act_queue.empty() else self.act_queue.get()
         if action is None:
@@ -164,6 +214,7 @@ class PolicyWrapper:
                     policy.reset()
                     obs_history.clear()
                     start_of_episode = True
+                    self.last_error = None
                     while not self.act_queue.empty():
                         self.act_queue.get()
                     continue
@@ -174,7 +225,16 @@ class PolicyWrapper:
             if self.act_queue.qsize() < LATENCY_STEPS and len(obs_history) == self.n_obs_steps:
                 self.profile_infer_trigger_count += 1
                 obs_sequence = list(obs_history)
-                act_sequence = policy.step(obs_sequence)
+                try:
+                    act_sequence = policy.step(obs_sequence)
+                except Exception as e:
+                    self.last_error = e
+                    print(f'[policy_queue] inference error: {type(e).__name__}: {e}', flush=True)
+                    obs_history.clear()
+                    while not self.act_queue.empty():
+                        self.act_queue.get()
+                    time.sleep(0.1)
+                    continue
                 if not self.act_queue.empty():
                     print('Warning: Unexpected action queue backlog. Is the latency budget set too high?')
                     self.profile_backlog_count += 1
@@ -219,10 +279,13 @@ class PolicyServer:
         # Decode images
         for k, v in obs.items():
             if k.endswith('image'):
-                bgr = cv.imdecode(v, cv.IMREAD_COLOR)
-                if bgr is None:
-                    raise RuntimeError(f'Failed to decode image for key: {k}')
-                obs[k] = cv.cvtColor(bgr, cv.COLOR_BGR2RGB)
+                if isinstance(v, np.ndarray) and v.dtype == np.uint8 and (v.ndim == 1 or (v.ndim == 2 and 1 in v.shape)):
+                    bgr = cv.imdecode(v, cv.IMREAD_COLOR)
+                    if bgr is None:
+                        raise RuntimeError(f'Failed to decode image for key: {k}')
+                    obs[k] = cv.cvtColor(bgr, cv.COLOR_BGR2RGB)
+                else:
+                    obs[k] = v
 
         # Get action
         action = self.policy.step(obs)
@@ -242,9 +305,13 @@ class PolicyServer:
 
             # Get action
             elif 'obs' in req:
-                obs = req['obs']
-                action = self.step(obs)
-                rep['action'] = action
+                try:
+                    obs = req['obs']
+                    action = self.step(obs)
+                    rep['action'] = action
+                except Exception as e:
+                    rep['error'] = f'{type(e).__name__}: {e}'
+                    print(f'[policy_server] request error: {rep["error"]}', flush=True)
 
             # Send reply to client
             self.socket.send_pyobj(rep)

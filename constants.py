@@ -25,7 +25,7 @@ ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TOD
 # advertising the Wi-Fi static IP that should be opened on the phone.
 WEB_SERVER_HOST = '0.0.0.0'
 WEB_SERVER_PORT = 5000
-WEB_SERVER_ADVERTISE_HOST = '10.167.61.122'
+WEB_SERVER_ADVERTISE_HOST = '10.135.233.102'
 
 # Base and arm RPC servers
 BASE_RPC_HOST = 'localhost'
@@ -142,7 +142,7 @@ WRIST_CAMERA_HEIGHT = 1080
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST =  '10.167.61.100' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST =  '10.135.233.101' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 20
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ

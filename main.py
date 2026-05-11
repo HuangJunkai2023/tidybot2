@@ -49,11 +49,14 @@ def _build_logged_observation(obs, action):
     logged_obs = dict(obs)
     if ENABLE_ARM and ER3PRO_ARM_POSE_OBS_SOURCE == 'command':
         # Save demonstration command for arm pose so dataset aligns with teleop intent.
-        logged_obs['arm_pos'] = np.asarray(action['arm_pos'], dtype=np.float64).copy()
-        logged_obs['arm_quat'] = np.asarray(action['arm_quat'], dtype=np.float64).copy()
+        if 'arm_pos' in action:
+            logged_obs['arm_pos'] = np.asarray(action['arm_pos'], dtype=np.float64).copy()
+        if 'arm_quat' in action:
+            logged_obs['arm_quat'] = np.asarray(action['arm_quat'], dtype=np.float64).copy()
         if 'arm_joints' in action:
             logged_obs['arm_joints'] = np.asarray(action['arm_joints'], dtype=np.float64).copy()
-        logged_obs['gripper_pos'] = np.asarray(action['gripper_pos'], dtype=np.float64).copy()
+        if 'gripper_pos' in action:
+            logged_obs['gripper_pos'] = np.asarray(action['gripper_pos'], dtype=np.float64).copy()
     return logged_obs
 
 def _normalize_action_for_env(obs, action):

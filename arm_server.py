@@ -387,10 +387,16 @@ class ER3ProCppBridgeArm:
         arm_joints = None
         if 'arm_joints' in action:
             arm_joints = np.asarray(action['arm_joints'], dtype=np.float64)
-        arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
-        arm_quat = np.asarray(action['arm_quat'], dtype=np.float64)
+        arm_pos = np.asarray(action['arm_pos'], dtype=np.float64) if 'arm_pos' in action else None
+        arm_quat = np.asarray(action['arm_quat'], dtype=np.float64) if 'arm_quat' in action else None
         gripper_value = float(np.asarray(action['gripper_pos']).item())
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
+        if arm_joints is not None and (arm_pos is None or arm_quat is None):
+            try:
+                rep = self._request('FKJ ' + ' '.join(str(float(v)) for v in arm_joints), timeout=1.0)
+                arm_pos, arm_quat = self._parse_fk_response(rep)
+            except Exception as e:
+                print(f'[arm_bridge] FKJ for joint command failed: {e}', file=sys.stderr, flush=True)
         if ER3PRO_ARM_CMD_LOG_INTERVAL > 0.0:
             now = time.monotonic()
             if now - self.last_cmd_log_time >= ER3PRO_ARM_CMD_LOG_INTERVAL:
@@ -413,8 +419,9 @@ class ER3ProCppBridgeArm:
         with self.state_lock:
             self.last_cmd_gripper_pos = gripper_value
             self.gripper_pos[:] = gripper_value
-            self.cmd_arm_pos = arm_pos.copy()
-            self.cmd_arm_quat = arm_quat.copy()
+            if arm_pos is not None and arm_quat is not None:
+                self.cmd_arm_pos = arm_pos.copy()
+                self.cmd_arm_quat = arm_quat.copy()
             if arm_joints is not None:
                 self.cmd_arm_joints = arm_joints.copy()
         with self.worker_cv:
@@ -425,6 +432,8 @@ class ER3ProCppBridgeArm:
                     'gripper': gripper_value,
                 }
             else:
+                if arm_pos is None or arm_quat is None:
+                    raise ValueError('Cartesian arm action requires arm_pos and arm_quat')
                 self.pending_action = {
                     'kind': 'cartesian',
                     'arm_pos': arm_pos.copy(),
