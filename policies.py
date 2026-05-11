@@ -4,15 +4,17 @@
 import logging
 import math
 import socket
+import subprocess
 import threading
 import time
 from queue import Empty, Queue
 import cv2 as cv
 import numpy as np
 import zmq
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from scipy.spatial.transform import Rotation as R
+from constants import WEB_SERVER_HOST, WEB_SERVER_PORT, WEB_SERVER_ADVERTISE_HOST
 from constants import POLICY_SERVER_HOST, POLICY_SERVER_PORT, POLICY_IMAGE_WIDTH, POLICY_IMAGE_HEIGHT
 from constants import BASE_DIFF_DRIVE_MODE
 from constants import POLICY_CONTROL_PERIOD
@@ -81,6 +83,14 @@ class WebServer:
         def index():
             return render_template('index.html')
 
+        @self.socketio.on('connect')
+        def handle_connect():
+            print(f'[web] client connected: {request.remote_addr}', flush=True)
+
+        @self.socketio.on('disconnect')
+        def handle_disconnect():
+            print(f'[web] client disconnected: {request.remote_addr}', flush=True)
+
         @self.socketio.on('message')
         def handle_message(data):
             # Throttle RTT echos to avoid flooding the browser main thread.
@@ -94,24 +104,20 @@ class WebServer:
 
             # Keep only the newest teleop packet; state updates are queued separately.
             self.message_buffer.put(data)
+            if 'state_update' in data:
+                print(f"[web] state_update={data['state_update']} from {request.remote_addr}", flush=True)
 
         # Reduce verbose Flask log output
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
     def run(self, use_ssl=False):
-        # Get IP address
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0)
-        try:
-            s.connect(('8.8.8.8', 1))
-            address = s.getsockname()[0]
-        except Exception:
-            address = '127.0.0.1'
-        finally:
-            s.close()
-        
+        addresses = get_local_ipv4_addresses()
+        address = WEB_SERVER_ADVERTISE_HOST or choose_advertised_address(addresses)
         protocol = 'https' if use_ssl else 'http'
-        print(f'Starting server at {protocol}://{address}:5000')
+        print(f'Starting web server on {WEB_SERVER_HOST}:{WEB_SERVER_PORT}')
+        print(f'Open on phone: {protocol}://{address}:{WEB_SERVER_PORT}')
+        if addresses:
+            print(f'Local IPv4 addresses: {", ".join(addresses)}')
         
         if use_ssl:
             import os
@@ -119,14 +125,80 @@ class WebServer:
             cert_file = os.path.join(script_dir, 'cert.pem')
             key_file = os.path.join(script_dir, 'key.pem')
             if os.path.exists(cert_file) and os.path.exists(key_file):
-                self.socketio.run(self.app, host='0.0.0.0', ssl_context=(cert_file, key_file))
+                self.socketio.run(
+                    self.app,
+                    host=WEB_SERVER_HOST,
+                    port=WEB_SERVER_PORT,
+                    ssl_context=(cert_file, key_file),
+                    allow_unsafe_werkzeug=True,
+                )
             else:
                 print(f'Warning: SSL certificates not found. Run this command to generate them:')
-                print(f'openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365')
+                print(
+                    'openssl req -x509 -newkey rsa:4096 -nodes '
+                    f'-out cert.pem -keyout key.pem -days 365 '
+                    f'-subj "/CN={address}" -addext "subjectAltName=IP:{address}"'
+                )
                 print(f'Error: Cannot start HTTPS server without certificates.')
                 return
         else:
-            self.socketio.run(self.app, host='0.0.0.0')
+            self.socketio.run(
+                self.app,
+                host=WEB_SERVER_HOST,
+                port=WEB_SERVER_PORT,
+                allow_unsafe_werkzeug=True,
+            )
+
+
+def get_local_ipv4_addresses():
+    addresses = []
+    try:
+        output = subprocess.check_output(
+            ['ip', '-4', '-o', 'addr', 'show', 'scope', 'global'],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        for line in output.splitlines():
+            fields = line.split()
+            if 'inet' not in fields:
+                continue
+            address = fields[fields.index('inet') + 1].split('/')[0]
+            if address not in addresses:
+                addresses.append(address)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    try:
+        host_name = socket.gethostname()
+        for info in socket.getaddrinfo(host_name, None, socket.AF_INET, socket.SOCK_DGRAM):
+            address = info[4][0]
+            if not address.startswith('127.') and address not in addresses:
+                addresses.append(address)
+    except socket.gaierror:
+        pass
+
+    # This catches the default route address, which is often the Wi-Fi address.
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0)
+    try:
+        s.connect(('8.8.8.8', 1))
+        address = s.getsockname()[0]
+        if not address.startswith('127.') and address not in addresses:
+            addresses.append(address)
+    except OSError:
+        pass
+    finally:
+        s.close()
+    return addresses
+
+
+def choose_advertised_address(addresses):
+    if not addresses:
+        return '127.0.0.1'
+    for address in addresses:
+        if address.startswith('192.168.'):
+            return address
+    return addresses[0]
 
 DEVICE_CAMERA_OFFSET = np.array([0.0, 0.02, -0.04])  # iPhone 14 Pro
 
@@ -460,8 +532,10 @@ class TeleopPolicy(Policy):
 
         # Wait for user to signal that episode has started
         self.teleop_state = None
+        print('[web] waiting for Start episode from phone...', flush=True)
         while self.teleop_state != 'episode_started':
             time.sleep(0.01)
+        print('[web] episode_started received', flush=True)
 
     def step(self, obs):
         # Signal that user has ended episode

@@ -20,6 +20,13 @@ ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TOD
 ################################################################################
 # Teleop and imitation learning
 
+# Web app served to the phone for WebXR start/stop and teleop enabling.
+# Bind to all interfaces so the phone can connect through Wi-Fi, while
+# advertising the Wi-Fi static IP that should be opened on the phone.
+WEB_SERVER_HOST = '0.0.0.0'
+WEB_SERVER_PORT = 5000
+WEB_SERVER_ADVERTISE_HOST = '10.167.61.122'
+
 # Base and arm RPC servers
 BASE_RPC_HOST = 'localhost'
 BASE_RPC_PORT = 50000
@@ -135,7 +142,7 @@ WRIST_CAMERA_HEIGHT = 1080
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST = '192.168.1.101' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST =  '10.167.61.100' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 20
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
@@ -154,7 +161,7 @@ UARM_GRIPPER_SERVO_ID = 7
 # Joint-direction calibration for the 7 arm servos. Servo 003 is reversed
 # relative to the ER3Pro teleop convention, so its sign is flipped here.
 UARM_JOINT_SIGN = np.array([1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0], dtype=np.float64)
-UARM_JOINT_SCALE = np.ones(7, dtype=np.float64)
+UARM_JOINT_SCALE = np.array([0.6, 0.6, 0.6, 0.6, 0.6, 0.6, 1], dtype=np.float64)
 UARM_JOINT_OFFSET_DEG = np.zeros(7, dtype=np.float64)
 UARM_JOINT_LIMIT_DEG_MIN = np.array([-170.0, -120.0, -170.0, -170.0, -170.0, -170.0, -170.0], dtype=np.float64)
 UARM_JOINT_LIMIT_DEG_MAX = np.array([170.0, 120.0, 170.0, 170.0, 170.0, 170.0, 170.0], dtype=np.float64)

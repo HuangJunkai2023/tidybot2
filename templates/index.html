@@ -165,7 +165,7 @@
       </div>
       <p><span id="info"></span></p>
     </div>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/js/socket.io.min.js"></script>
     <script type="text/javascript">
       // Random device ID
       const deviceId = Math.random().toString(36).substring(2, 15);
@@ -192,6 +192,12 @@
 
       // Socket to communicate with server
       const socket = io();
+      socket.on('connect', () => {
+        document.getElementById('info').innerText = 'Socket connected';
+      });
+      socket.on('connect_error', (error) => {
+        document.getElementById('info').innerText = `Socket error: ${error.message}`;
+      });
 
       // Calculate RTT from server response
       socket.on('echo', (timestamp) => {
@@ -228,15 +234,30 @@
           textExitXRTitle: 'Reset env',
         });
         document.querySelector('header').appendChild(xrButton.domElement);
+        xrButton.enabled = true;
 
         if (navigator.xr) {
           navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-            xrButton.enabled = supported;
+            if (!supported) {
+              document.getElementById('info').innerText = 'WebXR unavailable; policy start button still works';
+            }
           });
+        } else {
+          document.getElementById('info').innerText = 'WebXR unavailable; policy start button still works';
         }
       }
 
       function onRequestSession() {
+        // Policy inference only needs this start signal. Send it before the AR
+        // session request so a WebXR permission/device failure does not block
+        // remote policy rollout startup.
+        const data = { timestamp: Date.now(), state_update: 'episode_started' };
+        socket.send(data);
+
+        if (!navigator.xr) {
+          return Promise.reject(new Error('WebXR is unavailable in this browser/context'));
+        }
+
         return navigator.xr.requestSession('immersive-ar', {
           optionalFeatures: ['dom-overlay'],
           domOverlay: { root: document.getElementById('overlay') },
@@ -259,10 +280,6 @@
           xrRefSpace = refSpace;
           session.requestAnimationFrame(onXRFrame);
         });
-
-        // Let the server know user has started the episode
-        const data = { timestamp: Date.now(), state_update: 'episode_started' };
-        socket.send(data);
       }
 
       function onPrepareEndSession() {
