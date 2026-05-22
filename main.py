@@ -2,6 +2,7 @@
 # Date: October 2024
 
 import argparse
+import signal
 import time
 from itertools import count
 import numpy as np
@@ -14,6 +15,47 @@ from policies import TeleopPolicy, RemotePolicy, UarmTeleopPolicy
 
 PROFILE_INTERVAL = 2.0
 ENABLE_MAIN_LOOP_PROFILE = False
+
+
+def _close_quietly(resource, name):
+    if resource is None or not hasattr(resource, 'close'):
+        return
+    try:
+        resource.close()
+    except Exception as e:
+        print(f'Warning: error while closing {name}: {e}', flush=True)
+
+
+def install_shutdown_handlers(get_resources):
+    shutting_down = {'active': False}
+    previous_handlers = {}
+
+    def cleanup():
+        env, policy = get_resources()
+        _close_quietly(policy, 'policy')
+        _close_quietly(env, 'env')
+
+    def handle_shutdown(signum, frame):
+        if not shutting_down['active']:
+            shutting_down['active'] = True
+            signal_name = signal.Signals(signum).name
+            print(f'\nReceived {signal_name}, shutting down cleanly...', flush=True)
+            cleanup()
+        if signum == signal.SIGINT:
+            raise KeyboardInterrupt
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGINT, signal.SIGTERM, getattr(signal, 'SIGTSTP', None)):
+        if signum is None:
+            continue
+        previous_handlers[signum] = signal.getsignal(signum)
+        signal.signal(signum, handle_shutdown)
+
+    def restore():
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
+
+    return restore
 
 
 def move_arm_to_teleop_preset(env):
@@ -261,32 +303,38 @@ def run_episode(env, policy, writer=None):
         writer.wait_for_flush()
 
 def main(args):
-    # Create env
-    if args.sim:
-        from mujoco_env import MujocoEnv
-        if args.teleop:
-            env = MujocoEnv(show_images=True)
-        else:
-            env = MujocoEnv()
-    else:
-        from real_env import RealEnv
-        env = RealEnv()
-
-    # Create policy
-    if args.teleop:
-        if args.uarm:
-            policy = UarmTeleopPolicy(env.arm)
-        else:
-            policy = TeleopPolicy(use_ssl=args.ssl)
-    else:
-        policy = RemotePolicy(use_ssl=args.ssl)
+    env = None
+    policy = None
+    restore_shutdown_handlers = install_shutdown_handlers(lambda: (env, policy))
 
     try:
+        # Create env
+        if args.sim:
+            from mujoco_env import MujocoEnv
+            if args.teleop:
+                env = MujocoEnv(show_images=True)
+            else:
+                env = MujocoEnv()
+        else:
+            from real_env import RealEnv
+            env = RealEnv()
+
+        # Create policy
+        if args.teleop:
+            if args.uarm:
+                policy = UarmTeleopPolicy(env.arm)
+            else:
+                policy = TeleopPolicy(use_ssl=args.ssl)
+        else:
+            policy = RemotePolicy(use_ssl=args.ssl)
+
         while True:
             writer = EpisodeWriter(args.output_dir) if args.save else None
             run_episode(env, policy, writer)
     finally:
-        env.close()
+        _close_quietly(policy, 'policy')
+        _close_quietly(env, 'env')
+        restore_shutdown_handlers()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

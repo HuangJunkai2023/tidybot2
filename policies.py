@@ -46,6 +46,9 @@ class Policy:
     def step(self, obs):
         raise NotImplementedError
 
+    def close(self):
+        pass
+
 
 class TeleopMessageBuffer:
     def __init__(self):
@@ -621,6 +624,11 @@ class UarmTeleopPolicy(Policy):
             'gripper_pos': np.array([self.last_gripper], dtype=np.float64),
         }
 
+    def close(self):
+        if self.reader is not None:
+            self.reader.close()
+            self.reader = None
+
 # Execute policy running on remote server
 class RemotePolicy(TeleopPolicy):
     def __init__(self, use_ssl=False):
@@ -733,6 +741,12 @@ class RemotePolicy(TeleopPolicy):
         self.profile_rtt_max_ms = 0.0
         self.profile_encode_total_ms = 0.0
         self.profile_encode_max_ms = 0.0
+
+    def close(self):
+        if self.socket is not None:
+            self.socket.close(linger=0)
+            self.socket = None
+        self.context.term()
 
     def _maybe_print_profile(self):
         now = time.time()

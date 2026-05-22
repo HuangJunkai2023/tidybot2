@@ -15,15 +15,19 @@ class Camera:
     def __init__(self):
         self.image = None
         self.last_read_time = time.time()
-        threading.Thread(target=self.camera_worker, daemon=True).start()
+        self._closed = False
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self.camera_worker, daemon=True)
+        self._thread.start()
 
     def camera_worker(self):
         # Note: We read frames at 30 fps but not every frame is necessarily
         # saved during teleop or used during policy inference
-        while True:
+        while not self._stop_event.is_set():
             # Reading new frames too quickly causes latency spikes
             while time.time() - self.last_read_time < 0.0333:  # 30 fps
-                time.sleep(0.0001)
+                if self._stop_event.wait(0.0001):
+                    return
             _, bgr_image = self.cap.read()
             self.last_read_time = time.time()
             if bgr_image is not None:
@@ -33,7 +37,15 @@ class Camera:
         return self.image
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_event.set()
+        if getattr(self, '_thread', None) is not None:
+            self._thread.join(timeout=1.0)
         self.cap.release()
+        if getattr(self, '_thread', None) is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
 class DummyCamera:
     def __init__(self, frame_width=640, frame_height=480):

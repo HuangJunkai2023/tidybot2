@@ -25,6 +25,8 @@ class RealEnv:
             'base_action': 0.0,
             'arm_action': 0.0,
         }
+        self.base_camera = None
+        self.wrist_camera = None
 
         if ENABLE_BASE:
             base_manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTHKEY)
@@ -46,14 +48,18 @@ class RealEnv:
             raise Exception('At least one subsystem must be enabled')
 
         # Cameras
-        self.base_camera = self._create_base_camera(BASE_CAMERA_DEVICE)
-        self.wrist_camera = (
-            KinovaCamera()
-            if USE_KINOVA_WRIST_CAMERA
-            else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=WRIST_CAMERA_WIDTH, frame_height=WRIST_CAMERA_HEIGHT)
-        )
-        self._camera_warning_times = {}
-        self._wait_for_initial_frames()
+        try:
+            self.base_camera = self._create_base_camera(BASE_CAMERA_DEVICE)
+            self.wrist_camera = (
+                KinovaCamera()
+                if USE_KINOVA_WRIST_CAMERA
+                else UVCCamera(WRIST_CAMERA_DEVICE, frame_width=WRIST_CAMERA_WIDTH, frame_height=WRIST_CAMERA_HEIGHT)
+            )
+            self._camera_warning_times = {}
+            self._wait_for_initial_frames()
+        except Exception:
+            self.close()
+            raise
 
     def _create_base_camera(self, camera_hint):
         hint = str(camera_hint).strip()
@@ -165,10 +171,16 @@ class RealEnv:
     def close(self):
         if self.base is not None:
             self.base.close()
+            self.base = None
         if self.arm is not None:
             self.arm.close()
-        self.base_camera.close()
-        self.wrist_camera.close()
+            self.arm = None
+        if self.base_camera is not None:
+            self.base_camera.close()
+            self.base_camera = None
+        if self.wrist_camera is not None:
+            self.wrist_camera.close()
+            self.wrist_camera = None
 
 if __name__ == '__main__':
     import time

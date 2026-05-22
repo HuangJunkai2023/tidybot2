@@ -510,6 +510,10 @@ class ER3ProCppBridgeArm:
             self._log_soft_protection(f'reject near-zero arm_quat={arm_quat}')
             return
         arm_quat = arm_quat / quat_norm
+        with self.state_lock:
+            prev_cmd_quat = self.cmd_arm_quat.copy()
+        if float(np.dot(arm_quat, prev_cmd_quat)) < 0.0:
+            arm_quat = -arm_quat
         try:
             arm_pos, soft_adjusted = self._apply_soft_protection(arm_pos)
         except ValueError:

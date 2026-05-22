@@ -25,7 +25,7 @@ ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TOD
 # advertising the Wi-Fi static IP that should be opened on the phone.
 WEB_SERVER_HOST = '0.0.0.0'
 WEB_SERVER_PORT = 5000
-WEB_SERVER_ADVERTISE_HOST = '10.23.51.122'
+WEB_SERVER_ADVERTISE_HOST = '10.89.164.122'
 
 # Base and arm RPC servers
 BASE_RPC_HOST = 'localhost'
@@ -121,20 +121,20 @@ ER3PRO_CPP_BRIDGE_BIN = '../xCoreSDK_cpp-v0.7.1/build/bin/arm_bridge'
 ER3PRO_UARM_RT_BIN = '../xCoreSDK_cpp-v0.7.1/build/bin/uarm_er3pro_rt'
 ER3PRO_FOLLOW_SCALE = 0.8   # FollowPosition speed scale in [0,1], larger -> more responsive
 ER3PRO_RT_FILTER_FREQ = 15.0 # Hz, larger -> less lag, smaller -> smoother
-ER3PRO_MAX_POS_SPEED = 0.18   # m/s
-ER3PRO_MAX_ROT_SPEED = 0.90   # rad/s
-ER3PRO_MAX_POS_ACCEL = 0.90   # m/s^2
-ER3PRO_MAX_ROT_ACCEL = 4.50   # rad/s^2
+ER3PRO_MAX_POS_SPEED = 0.03   # m/s
+ER3PRO_MAX_ROT_SPEED = 0.15   # rad/s
+ER3PRO_MAX_POS_ACCEL = 0.10   # m/s^2
+ER3PRO_MAX_ROT_ACCEL = 0.50   # rad/s^2
 ER3PRO_CMD_TIMEOUT = 0.25     # s, equivalent to 2.5 * POLICY_CONTROL_PERIOD
 ER3PRO_TCP_OFFSET_Z = 0.10    # m, TCP defined at gripper center 10 cm along flange +Z
 ER3PRO_TELEOP_PRESET_JOINT_DEG = np.array([-5.0, 10.0, 0.0, 80.0, 0.0, 90.0, 0.0], dtype=np.float64)
 
 
-ER3PRO_CARTESIAN_IMPEDANCE = np.array([300.0, 300.0, 300.0, 50.0, 50.0, 50.0], dtype=np.float64)
+ER3PRO_CARTESIAN_IMPEDANCE = np.array([120.0, 120.0, 120.0, 10.0, 10.0, 10.0], dtype=np.float64)
 ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE = np.zeros(6, dtype=np.float64)
 ER3PRO_SOFT_PROTECTION_ENABLE = True
-ER3PRO_SOFT_Z_DROP_LIMIT = 0.06
-ER3PRO_SOFT_MAX_DOWN_STEP = 0.065
+ER3PRO_SOFT_Z_DROP_LIMIT = 0.12
+ER3PRO_SOFT_MAX_DOWN_STEP = 0.003
 ER3PRO_ARM_CMD_LOG_INTERVAL = 0.0  # s, 0 disables high-rate command logging
 
 # Cameras
@@ -149,7 +149,7 @@ WRIST_CAMERA_HEIGHT = 1080
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST =  '10.23.51.101' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST =  '10.89.164.101' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 6.67
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
