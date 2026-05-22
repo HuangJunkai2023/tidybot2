@@ -151,15 +151,21 @@ class RealEnv:
         else:
             self.last_step_timing_ms['base_action'] = 0.0
         if self.arm is not None:
+            arm_joints = action.get('arm_joints')
+            if arm_joints is None:
+                for alias in ('arm_joint', 'arm_joint_pos', 'arm_qpos'):
+                    if alias in action:
+                        arm_joints = action[alias]
+                        break
             if 'gripper_pos' in action and (
-                'arm_joints' in action or all(k in action for k in ('arm_pos', 'arm_quat'))
+                arm_joints is not None or all(k in action for k in ('arm_pos', 'arm_quat'))
             ):
                 arm_action = {'gripper_pos': action['gripper_pos']}
                 if 'arm_pos' in action and 'arm_quat' in action:
                     arm_action['arm_pos'] = action['arm_pos']
                     arm_action['arm_quat'] = action['arm_quat']
-                if 'arm_joints' in action:
-                    arm_action['arm_joints'] = action['arm_joints']
+                if arm_joints is not None:
+                    arm_action['arm_joints'] = arm_joints
                 t0 = time.time()
                 self.arm.execute_action(arm_action)   # Non-blocking
                 self.last_step_timing_ms['arm_action'] = 1000.0 * (time.time() - t0)

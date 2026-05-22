@@ -106,6 +106,11 @@ def _normalize_action_for_env(obs, action):
         return action
 
     normalized_action = dict(action)
+    if 'arm_joints' not in normalized_action:
+        for alias in ('arm_joint', 'arm_joint_pos', 'arm_qpos'):
+            if alias in normalized_action:
+                normalized_action['arm_joints'] = normalized_action[alias]
+                break
 
     # Some teleop sources, such as UArm, only drive the arm. Keep the base
     # command pinned to the current pose so downstream components still receive
