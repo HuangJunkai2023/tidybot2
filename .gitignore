@@ -14,3 +14,6 @@ key.pem
 data/
 logs/
 _*/
+.deepseek/
+/prompt
+AGENTS.md
