@@ -25,7 +25,7 @@ ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TOD
 # advertising the Wi-Fi static IP that should be opened on the phone.
 WEB_SERVER_HOST = '0.0.0.0'
 WEB_SERVER_PORT = 5000
-WEB_SERVER_ADVERTISE_HOST = '10.135.233.102'
+WEB_SERVER_ADVERTISE_HOST = '10.23.51.122'
 
 # Base and arm RPC servers
 BASE_RPC_HOST = 'localhost'
@@ -127,7 +127,14 @@ ER3PRO_MAX_POS_ACCEL = 0.90   # m/s^2
 ER3PRO_MAX_ROT_ACCEL = 4.50   # rad/s^2
 ER3PRO_CMD_TIMEOUT = 0.25     # s, equivalent to 2.5 * POLICY_CONTROL_PERIOD
 ER3PRO_TCP_OFFSET_Z = 0.10    # m, TCP defined at gripper center 10 cm along flange +Z
-ER3PRO_TELEOP_PRESET_JOINT_DEG = np.array([0.0, 30.0, 0.0, 60.0, 0.0, 90.0, 0.0], dtype=np.float64)
+ER3PRO_TELEOP_PRESET_JOINT_DEG = np.array([-5.0, 10.0, 0.0, 80.0, 0.0, 90.0, 0.0], dtype=np.float64)
+
+
+ER3PRO_CARTESIAN_IMPEDANCE = np.array([300.0, 300.0, 300.0, 50.0, 50.0, 50.0], dtype=np.float64)
+ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE = np.zeros(6, dtype=np.float64)
+ER3PRO_SOFT_PROTECTION_ENABLE = True
+ER3PRO_SOFT_Z_DROP_LIMIT = 0.06
+ER3PRO_SOFT_MAX_DOWN_STEP = 0.065
 ER3PRO_ARM_CMD_LOG_INTERVAL = 0.0  # s, 0 disables high-rate command logging
 
 # Cameras
@@ -142,9 +149,9 @@ WRIST_CAMERA_HEIGHT = 1080
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST =  '10.135.233.101' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST =  '10.23.51.101' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
-POLICY_CONTROL_FREQ = 20
+POLICY_CONTROL_FREQ = 6.67
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
 POLICY_IMAGE_WIDTH = 320
 POLICY_IMAGE_HEIGHT = 240

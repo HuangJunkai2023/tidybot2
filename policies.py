@@ -34,6 +34,7 @@ from uarm_teleop import UarmMasterReader
 
 POLICY_SOCKET_TIMEOUT_MS = 1000
 POLICY_PROFILE_INTERVAL = 2.0
+REMOTE_POLICY_ACTIVE_TIMEOUT = 0.35
 
 class Policy:
     uses_web_start = False
@@ -627,6 +628,8 @@ class RemotePolicy(TeleopPolicy):
 
         # Use phone as enabling device during policy rollout
         self.enabled = False
+        self.active_until = 0.0
+        self.waiting_for_phone_enable = False
 
         # Connection to policy server
         self.context = zmq.Context()
@@ -650,6 +653,9 @@ class RemotePolicy(TeleopPolicy):
 
     def reset(self):
         self.enabled = False
+        self.active_until = 0.0
+        self.waiting_for_phone_enable = False
+        self._reset_profile()
 
         # Wait for user to signal that episode has started
         super().reset()  # Note: Comment out to run without phone
@@ -662,15 +668,18 @@ class RemotePolicy(TeleopPolicy):
             self._connect_socket()
             raise Exception('Could not communicate with policy server') from e
 
-        # Enable policy execution immediately
-        self.enabled = True
+        self.waiting_for_phone_enable = True
+        print('[remote_policy] waiting for phone touch/control input before sending observations', flush=True)
 
     def _step(self, obs):
         # Return teleop command if episode has ended
         if self.episode_ended:
             return self.teleop_controller.step(obs)
 
-        # Return no action if robot is not enabled
+        if self.enabled and time.time() > self.active_until:
+            self.enabled = False
+
+        # Return no action if robot is not enabled by current phone input
         if not self.enabled:
             return None
 
@@ -717,6 +726,14 @@ class RemotePolicy(TeleopPolicy):
 
         return action
 
+    def _reset_profile(self):
+        self.profile_last_time = time.time()
+        self.profile_step_count = 0
+        self.profile_rtt_total_ms = 0.0
+        self.profile_rtt_max_ms = 0.0
+        self.profile_encode_total_ms = 0.0
+        self.profile_encode_max_ms = 0.0
+
     def _maybe_print_profile(self):
         now = time.time()
         dt = now - self.profile_last_time
@@ -741,6 +758,17 @@ class RemotePolicy(TeleopPolicy):
         if self.episode_ended:
             # Run teleop controller if episode has ended
             self.teleop_controller.process_message(data)
+            return
+
+        # During policy rollout the phone is used as a deadman switch. The web
+        # client only includes teleop_mode while the screen/buttons are active.
+        if 'teleop_mode' in data:
+            self.active_until = time.time() + REMOTE_POLICY_ACTIVE_TIMEOUT
+            if not self.enabled:
+                self.enabled = True
+                self.waiting_for_phone_enable = False
+                self._reset_profile()
+                print('[remote_policy] phone input active; policy inference enabled', flush=True)
 
 if __name__ == '__main__':
     # WebServer(Queue()).run(); time.sleep(1000)

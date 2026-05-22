@@ -42,6 +42,8 @@ from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
 from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
 from constants import ER3PRO_TCP_OFFSET_Z, ER3PRO_ARM_CMD_LOG_INTERVAL
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
+from constants import ER3PRO_CARTESIAN_IMPEDANCE, ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE
+from constants import ER3PRO_SOFT_PROTECTION_ENABLE, ER3PRO_SOFT_Z_DROP_LIMIT, ER3PRO_SOFT_MAX_DOWN_STEP
 
 ER3PRO_STATE_POLL_PERIOD = 0.10
 
@@ -140,6 +142,8 @@ class ER3ProCppBridgeArm:
         self.measured_gripper_pos = 1.0
         self.measured_gripper_force = float('nan')
         self.last_cmd_log_time = 0.0
+        self.last_soft_protection_log_time = 0.0
+        self.soft_floor_z = -np.inf
 
         bridge_path = Path(__file__).resolve().parent / ER3PRO_CPP_BRIDGE_BIN
         if not bridge_path.exists():
@@ -161,6 +165,8 @@ class ER3ProCppBridgeArm:
             '--cmd-timeout', str(ER3PRO_CMD_TIMEOUT),
             '--tcp-offset-z', str(ER3PRO_TCP_OFFSET_Z),
             '--preset-joints-deg', ','.join(str(float(v)) for v in ER3PRO_TELEOP_PRESET_JOINT_DEG),
+            '--cartesian-impedance', ','.join(str(float(v)) for v in ER3PRO_CARTESIAN_IMPEDANCE),
+            '--cartesian-impedance-desired-force', ','.join(str(float(v)) for v in ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
             '--gripper-backend', bridge_gripper_backend,
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
@@ -210,6 +216,7 @@ class ER3ProCppBridgeArm:
             self.usb_gripper = JodellUsbGripper()
 
         self._refresh_state(timeout=3.0)
+        self._update_soft_floor_from_command()
         self.worker_running = True
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
@@ -300,6 +307,49 @@ class ER3ProCppBridgeArm:
             self.worker_paused = paused
             self.worker_cv.notify_all()
 
+    def _update_soft_floor_from_command(self):
+        with self.state_lock:
+            self.soft_floor_z = float(self.cmd_arm_pos[2] - ER3PRO_SOFT_Z_DROP_LIMIT)
+
+    def _log_soft_protection(self, msg):
+        now = time.monotonic()
+        if now - self.last_soft_protection_log_time >= 1.0:
+            print(f'[arm_soft_protect] {msg}', file=sys.stderr, flush=True)
+            self.last_soft_protection_log_time = now
+
+    def _apply_soft_protection(self, arm_pos):
+        arm_pos = np.asarray(arm_pos, dtype=np.float64).copy()
+        if not ER3PRO_SOFT_PROTECTION_ENABLE:
+            if not np.all(np.isfinite(arm_pos)):
+                raise ValueError(f'Non-finite arm_pos command: {arm_pos}')
+            return arm_pos, False
+
+        if not np.all(np.isfinite(arm_pos)):
+            self._log_soft_protection(f'reject non-finite arm_pos={arm_pos}')
+            raise ValueError(f'Non-finite arm_pos command: {arm_pos}')
+
+        adjusted = False
+        with self.state_lock:
+            reference_z = float(self.cmd_arm_pos[2])
+            soft_floor_z = float(self.soft_floor_z)
+
+        min_step_z = reference_z - ER3PRO_SOFT_MAX_DOWN_STEP
+        if arm_pos[2] < min_step_z:
+            self._log_soft_protection(
+                f'limit downward step z {arm_pos[2]:.4f}->{min_step_z:.4f}'
+            )
+            arm_pos[2] = min_step_z
+            adjusted = True
+
+        if arm_pos[2] < soft_floor_z:
+            self._log_soft_protection(
+                f'clamp soft floor z {arm_pos[2]:.4f}->{soft_floor_z:.4f}'
+            )
+            arm_pos[2] = soft_floor_z
+            adjusted = True
+
+        return arm_pos, adjusted
+
     def _worker_loop(self):
         next_state_poll = time.monotonic()
         while True:
@@ -320,22 +370,14 @@ class ER3ProCppBridgeArm:
 
             if action is not None:
                 try:
-                    if action['kind'] == 'joint':
-                        arm_joints = action['arm_joints']
-                        gripper_value = action['gripper']
-                        self._request(
-                            'EXECJ ' + ' '.join(str(float(v)) for v in arm_joints) + f' {gripper_value}',
-                            timeout=8.0,
-                        )
-                    else:
-                        arm_pos = action['arm_pos']
-                        arm_quat = action['arm_quat']
-                        gripper_value = action['gripper']
-                        self._request(
-                            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
-                            f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
-                            timeout=8.0,
-                        )
+                    arm_pos = action['arm_pos']
+                    arm_quat = action['arm_quat']
+                    gripper_value = action['gripper']
+                    self._request(
+                        f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
+                        f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
+                        timeout=8.0,
+                    )
                     if self.usb_gripper is not None:
                         self.usb_gripper.command(gripper_value)
                 except Exception as e:
@@ -365,6 +407,7 @@ class ER3ProCppBridgeArm:
                 self.measured_gripper_pos = reported_gripper
                 self.measured_gripper_force = reported_force
                 self.pending_action = None
+            self._update_soft_floor_from_command()
         finally:
             self._set_worker_paused(False)
 
@@ -380,6 +423,54 @@ class ER3ProCppBridgeArm:
                 self.measured_gripper_pos = reported_gripper
                 self.measured_gripper_force = reported_force
                 self.pending_action = None
+            self._update_soft_floor_from_command()
+        finally:
+            self._set_worker_paused(False)
+
+    def move_linear_tcp(self, arm_pos, arm_quat, gripper_pos=None, speed_mm_s=None, zone_mm=0.0):
+        arm_pos = np.asarray(arm_pos, dtype=np.float64)
+        arm_quat = np.asarray(arm_quat, dtype=np.float64)
+        if arm_pos.shape != (3,) or not np.all(np.isfinite(arm_pos)):
+            raise ValueError(f'Invalid linear target arm_pos: {arm_pos}')
+        if arm_quat.shape != (4,) or not np.all(np.isfinite(arm_quat)):
+            raise ValueError(f'Invalid linear target arm_quat: {arm_quat}')
+        quat_norm = float(np.linalg.norm(arm_quat))
+        if quat_norm < 1e-9:
+            raise ValueError(f'Invalid linear target arm_quat: {arm_quat}')
+        arm_quat = arm_quat / quat_norm
+        if gripper_pos is None:
+            gripper_value = float(self.last_cmd_gripper_pos)
+        else:
+            gripper_value = float(np.asarray(gripper_pos, dtype=np.float64).reshape(-1)[0])
+        if not np.isfinite(gripper_value):
+            raise ValueError(f'Invalid linear target gripper_pos: {gripper_pos}')
+        gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
+        speed = float(ER3PRO_MOVE_VELOCITY if speed_mm_s is None else speed_mm_s)
+        zone = float(zone_mm)
+
+        self._set_worker_paused(True)
+        try:
+            rep = self._request(
+                f'MOVEL {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
+                f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} '
+                f'{gripper_value} {speed} {zone}',
+                timeout=40.0,
+            )
+            if rep != 'OK':
+                raise RuntimeError(f'Unexpected ER3Pro C++ bridge MOVEL response: {rep}')
+            if self.usb_gripper is not None:
+                self.usb_gripper.command(gripper_value)
+            arm_pos, arm_quat, arm_joints, reported_gripper, reported_force = self._refresh_state(timeout=3.0)
+            with self.state_lock:
+                self.last_cmd_gripper_pos = gripper_value
+                self.gripper_pos[:] = gripper_value
+                self.cmd_arm_pos = arm_pos.copy()
+                self.cmd_arm_quat = arm_quat.copy()
+                self.cmd_arm_joints = arm_joints.copy()
+                self.measured_gripper_pos = reported_gripper
+                self.measured_gripper_force = reported_force
+                self.pending_action = None
+            self._update_soft_floor_from_command()
         finally:
             self._set_worker_paused(False)
 
@@ -387,9 +478,15 @@ class ER3ProCppBridgeArm:
         arm_joints = None
         if 'arm_joints' in action:
             arm_joints = np.asarray(action['arm_joints'], dtype=np.float64)
+            if arm_joints.shape != (7,) or not np.all(np.isfinite(arm_joints)):
+                self._log_soft_protection(f'reject invalid arm_joints={arm_joints}')
+                return
         arm_pos = np.asarray(action['arm_pos'], dtype=np.float64) if 'arm_pos' in action else None
         arm_quat = np.asarray(action['arm_quat'], dtype=np.float64) if 'arm_quat' in action else None
         gripper_value = float(np.asarray(action['gripper_pos']).item())
+        if not np.isfinite(gripper_value):
+            self._log_soft_protection(f'reject invalid gripper={gripper_value}')
+            return
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
         if arm_joints is not None and (arm_pos is None or arm_quat is None):
             try:
@@ -397,6 +494,26 @@ class ER3ProCppBridgeArm:
                 arm_pos, arm_quat = self._parse_fk_response(rep)
             except Exception as e:
                 print(f'[arm_bridge] FKJ for joint command failed: {e}', file=sys.stderr, flush=True)
+                return
+        if arm_pos is None or arm_quat is None:
+            raise ValueError('Cartesian arm action requires arm_pos and arm_quat')
+        arm_pos = np.asarray(arm_pos, dtype=np.float64)
+        if arm_pos.shape != (3,):
+            self._log_soft_protection(f'reject invalid arm_pos shape={arm_pos.shape}')
+            return
+        arm_quat = np.asarray(arm_quat, dtype=np.float64)
+        if arm_quat.shape != (4,) or not np.all(np.isfinite(arm_quat)):
+            self._log_soft_protection(f'reject invalid arm_quat={arm_quat}')
+            return
+        quat_norm = float(np.linalg.norm(arm_quat))
+        if quat_norm < 1e-9:
+            self._log_soft_protection(f'reject near-zero arm_quat={arm_quat}')
+            return
+        arm_quat = arm_quat / quat_norm
+        try:
+            arm_pos, soft_adjusted = self._apply_soft_protection(arm_pos)
+        except ValueError:
+            return
         if ER3PRO_ARM_CMD_LOG_INTERVAL > 0.0:
             now = time.monotonic()
             if now - self.last_cmd_log_time >= ER3PRO_ARM_CMD_LOG_INTERVAL:
@@ -422,24 +539,15 @@ class ER3ProCppBridgeArm:
             if arm_pos is not None and arm_quat is not None:
                 self.cmd_arm_pos = arm_pos.copy()
                 self.cmd_arm_quat = arm_quat.copy()
-            if arm_joints is not None:
+            if arm_joints is not None and not soft_adjusted:
                 self.cmd_arm_joints = arm_joints.copy()
         with self.worker_cv:
-            if arm_joints is not None:
-                self.pending_action = {
-                    'kind': 'joint',
-                    'arm_joints': arm_joints.copy(),
-                    'gripper': gripper_value,
-                }
-            else:
-                if arm_pos is None or arm_quat is None:
-                    raise ValueError('Cartesian arm action requires arm_pos and arm_quat')
-                self.pending_action = {
-                    'kind': 'cartesian',
-                    'arm_pos': arm_pos.copy(),
-                    'arm_quat': arm_quat.copy(),
-                    'gripper': gripper_value,
-                }
+            self.pending_action = {
+                'kind': 'cartesian',
+                'arm_pos': arm_pos.copy(),
+                'arm_quat': arm_quat.copy(),
+                'gripper': gripper_value,
+            }
             self.worker_cv.notify()
 
     def forward_kinematics(self, arm_joints):
