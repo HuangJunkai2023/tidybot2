@@ -38,11 +38,10 @@ from constants import ER3PRO_GRIPPER_OBS_SOURCE, ER3PRO_GRIPPER_OBS_MAX_DEVIATIO
 from constants import ER3PRO_ARM_POSE_OBS_SOURCE
 from constants import ER3PRO_CPP_BRIDGE_BIN
 from constants import ER3PRO_FOLLOW_SCALE, ER3PRO_RT_FILTER_FREQ
-from constants import ER3PRO_MAX_POS_SPEED, ER3PRO_MAX_ROT_SPEED
-from constants import ER3PRO_MAX_POS_ACCEL, ER3PRO_MAX_ROT_ACCEL, ER3PRO_CMD_TIMEOUT
+from constants import ER3PRO_MAX_JOINT_SPEED, ER3PRO_MAX_JOINT_ACCEL, ER3PRO_CMD_TIMEOUT
 from constants import ER3PRO_TCP_OFFSET_Z, ER3PRO_ARM_CMD_LOG_INTERVAL
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
-from constants import ER3PRO_CARTESIAN_IMPEDANCE, ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE
+from constants import ER3PRO_JOINT_IMPEDANCE
 from constants import ER3PRO_SOFT_PROTECTION_ENABLE, ER3PRO_SOFT_Z_DROP_LIMIT, ER3PRO_SOFT_MAX_DOWN_STEP
 
 ER3PRO_STATE_POLL_PERIOD = 0.10
@@ -158,15 +157,12 @@ class ER3ProCppBridgeArm:
             '--zone', str(ER3PRO_MOVE_ZONE),
             '--follow-scale', str(ER3PRO_FOLLOW_SCALE),
             '--filter-freq', str(ER3PRO_RT_FILTER_FREQ),
-            '--max-pos-speed', str(ER3PRO_MAX_POS_SPEED),
-            '--max-rot-speed', str(ER3PRO_MAX_ROT_SPEED),
-            '--max-pos-accel', str(ER3PRO_MAX_POS_ACCEL),
-            '--max-rot-accel', str(ER3PRO_MAX_ROT_ACCEL),
+            '--max-joint-speed', str(ER3PRO_MAX_JOINT_SPEED),
+            '--max-joint-accel', str(ER3PRO_MAX_JOINT_ACCEL),
             '--cmd-timeout', str(ER3PRO_CMD_TIMEOUT),
             '--tcp-offset-z', str(ER3PRO_TCP_OFFSET_Z),
             '--preset-joints-deg', ','.join(str(float(v)) for v in ER3PRO_TELEOP_PRESET_JOINT_DEG),
-            '--cartesian-impedance', ','.join(str(float(v)) for v in ER3PRO_CARTESIAN_IMPEDANCE),
-            '--cartesian-impedance-desired-force', ','.join(str(float(v)) for v in ER3PRO_CARTESIAN_IMPEDANCE_DESIRED_FORCE),
+            '--joint-impedance', ','.join(str(float(v)) for v in ER3PRO_JOINT_IMPEDANCE),
             '--gripper-threshold', str(ER3PRO_GRIPPER_THRESHOLD),
             '--gripper-backend', bridge_gripper_backend,
             '--gripper-board', str(ER3PRO_GRIPPER_BOARD),
@@ -370,18 +366,26 @@ class ER3ProCppBridgeArm:
 
             if action is not None:
                 try:
-                    arm_pos = action['arm_pos']
-                    arm_quat = action['arm_quat']
                     gripper_value = action['gripper']
-                    self._request(
-                        f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
-                        f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
-                        timeout=8.0,
-                    )
+                    if action['kind'] == 'joint':
+                        arm_joints = action['arm_joints']
+                        self._request(
+                            'EXECJ ' + ' '.join(str(float(v)) for v in arm_joints)
+                            + f' {gripper_value}',
+                            timeout=8.0,
+                        )
+                    else:
+                        arm_pos = action['arm_pos']
+                        arm_quat = action['arm_quat']
+                        self._request(
+                            f'EXEC {arm_pos[0]} {arm_pos[1]} {arm_pos[2]} '
+                            f'{arm_quat[0]} {arm_quat[1]} {arm_quat[2]} {arm_quat[3]} {gripper_value}',
+                            timeout=8.0,
+                        )
                     if self.usb_gripper is not None:
                         self.usb_gripper.command(gripper_value)
                 except Exception as e:
-                    print(f'[arm_bridge] async EXEC failed: {e}', file=sys.stderr, flush=True)
+                    print(f'[arm_bridge] async action failed: {e}', file=sys.stderr, flush=True)
 
             now = time.monotonic()
             if now >= next_state_poll:
@@ -488,13 +492,40 @@ class ER3ProCppBridgeArm:
             self._log_soft_protection(f'reject invalid gripper={gripper_value}')
             return
         gripper_value = float(np.clip(gripper_value, 0.0, 1.0))
-        if arm_joints is not None and (arm_pos is None or arm_quat is None):
-            try:
-                rep = self._request('FKJ ' + ' '.join(str(float(v)) for v in arm_joints), timeout=1.0)
-                arm_pos, arm_quat = self._parse_fk_response(rep)
-            except Exception as e:
-                print(f'[arm_bridge] FKJ for joint command failed: {e}', file=sys.stderr, flush=True)
-                return
+        if arm_joints is not None:
+            if ER3PRO_ARM_CMD_LOG_INTERVAL > 0.0:
+                now = time.monotonic()
+                if now - self.last_cmd_log_time >= ER3PRO_ARM_CMD_LOG_INTERVAL:
+                    print(
+                        '[arm_cmd] '
+                        f'joints=[{", ".join(f"{v:.4f}" for v in arm_joints)}] '
+                        f'gripper={gripper_value:.3f}',
+                        flush=True,
+                    )
+                    self.last_cmd_log_time = now
+            with self.state_lock:
+                self.last_cmd_gripper_pos = gripper_value
+                self.gripper_pos[:] = gripper_value
+                self.cmd_arm_joints = arm_joints.copy()
+                if arm_pos is not None and arm_quat is not None:
+                    arm_pos = np.asarray(arm_pos, dtype=np.float64)
+                    arm_quat = np.asarray(arm_quat, dtype=np.float64)
+                    if arm_pos.shape == (3,) and arm_quat.shape == (4,) and np.all(np.isfinite(arm_pos)) and np.all(np.isfinite(arm_quat)):
+                        quat_norm = float(np.linalg.norm(arm_quat))
+                        if quat_norm >= 1e-9:
+                            arm_quat = arm_quat / quat_norm
+                            if float(np.dot(arm_quat, self.cmd_arm_quat)) < 0.0:
+                                arm_quat = -arm_quat
+                            self.cmd_arm_pos = arm_pos.copy()
+                            self.cmd_arm_quat = arm_quat.copy()
+            with self.worker_cv:
+                self.pending_action = {
+                    'kind': 'joint',
+                    'arm_joints': arm_joints.copy(),
+                    'gripper': gripper_value,
+                }
+                self.worker_cv.notify()
+            return
         if arm_pos is None or arm_quat is None:
             raise ValueError('Cartesian arm action requires arm_pos and arm_quat')
         arm_pos = np.asarray(arm_pos, dtype=np.float64)
