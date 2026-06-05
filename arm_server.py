@@ -198,15 +198,15 @@ class ER3ProCppBridgeArm:
             bufsize=1,
         )
 
-        # Forward bridge stderr so hardware/RS485 warnings are visible to operators.
-        if self.proc.stderr is not None:
-            self.stderr_thread = threading.Thread(target=self._stderr_loop, daemon=True)
-            self.stderr_thread.start()
-
         ready = self._read_line(timeout=10.0)
         if ready != 'READY':
             err = self.proc.stderr.readline().strip() if self.proc.stderr else ''
             raise RuntimeError(f'Failed to start ER3Pro C++ bridge: {ready} {err}')
+
+        # Forward bridge stderr so hardware/RS485 warnings are visible to operators.
+        if self.proc.stderr is not None:
+            self.stderr_thread = threading.Thread(target=self._stderr_loop, daemon=True)
+            self.stderr_thread.start()
 
         if ER3PRO_ENABLE_GRIPPER and ER3PRO_GRIPPER_BACKEND == 'jodell_usb':
             self.usb_gripper = JodellUsbGripper()
