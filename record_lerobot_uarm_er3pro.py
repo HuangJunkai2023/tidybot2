@@ -567,7 +567,8 @@ def main():
 
         def start_episode():
             nonlocal bridge, recording, episode_frames, next_frame_time, auto_end_time, last_status_time
-            bridge = BridgeProcess(args)
+            if bridge is None:
+                bridge = BridgeProcess(args)
             recording = True
             episode_frames = 0
             next_frame_time = time.monotonic()
@@ -576,25 +577,19 @@ def main():
             print("EPISODE_STARTED", flush=True)
 
         def finish_episode():
-            nonlocal bridge, recording
+            nonlocal recording
             save_episode(dataset, args.task)
             flush_saved_episode(dataset)
             recording = False
-            if bridge is not None:
-                bridge.close()
-                bridge = None
             print(f"EPISODE_SAVED frames={episode_frames}", flush=True)
 
         def discard_episode():
-            nonlocal bridge, recording
+            nonlocal recording
             if hasattr(dataset, "clear_episode_buffer"):
                 dataset.clear_episode_buffer()
             else:
                 print("Warning: this LeRobot version has no clear_episode_buffer(); restart if discard is required.", flush=True)
             recording = False
-            if bridge is not None:
-                bridge.close()
-                bridge = None
             print(f"EPISODE_DISCARDED frames={episode_frames}", flush=True)
 
         while True:
