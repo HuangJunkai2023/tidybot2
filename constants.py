@@ -25,7 +25,7 @@ ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TOD
 # advertising the Wi-Fi static IP that should be opened on the phone.
 WEB_SERVER_HOST = '0.0.0.0'
 WEB_SERVER_PORT = 5000
-WEB_SERVER_ADVERTISE_HOST = '10.201.38.122'
+WEB_SERVER_ADVERTISE_HOST = '192.168.1.100'
 
 # Base and arm RPC servers
 BASE_RPC_HOST = 'localhost'
@@ -63,6 +63,22 @@ TELEOP_TOOL_ROLL_SPEED = 1.20         # rad/s, continuous tool-axis roll while b
 TELEOP_ARM_POSE_REJECT_ENABLE = True
 TELEOP_ARM_MAX_FRAME_POS_DELTA = 0.08   # m, reject a single teleop frame if arm target position jumps too far
 TELEOP_ARM_MAX_FRAME_ROT_DELTA = 0.20   # rad, reject a single teleop frame if arm target orientation jumps too far
+
+# Logitech F710 gamepad teleoperation
+GAMEPAD_DEADZONE = 0.08
+GAMEPAD_TCP_XY_SPEED = 0.08       # m/s, left stick TCP horizontal translation
+GAMEPAD_TCP_Z_SPEED = 0.06        # m/s, right stick vertical TCP translation
+GAMEPAD_TOOL_ROLL_SPEED = 1.20    # rad/s, right stick horizontal tool-axis roll
+GAMEPAD_GRIPPER_SPEED = 1.50      # normalized units/s, analog trigger gripper speed
+GAMEPAD_AXIS_LEFT_X = 0
+GAMEPAD_AXIS_LEFT_Y = 1
+GAMEPAD_AXIS_LT = 2
+GAMEPAD_AXIS_RIGHT_X = 3
+GAMEPAD_AXIS_RIGHT_Y = 4
+GAMEPAD_AXIS_RT = 5
+GAMEPAD_BUTTON_LB = 4
+GAMEPAD_BUTTON_BACK = 6
+GAMEPAD_BUTTON_START = 7
 
 # ER3Pro arm
 ER3PRO_IP = '192.168.0.160'
@@ -106,7 +122,7 @@ ER3PRO_GRIPPER_OBS_MAX_DEVIATION = 0.25
 # Arm pose observation source for data recording (affects saved episodes only):
 # - 'state': save measured arm pose from hardware state
 # - 'command': save teleop commanded arm pose/quaternion
-ER3PRO_ARM_POSE_OBS_SOURCE = 'command'
+ER3PRO_ARM_POSE_OBS_SOURCE = 'state'
 
 # USB-RS485 + Jodell Python SDK backend (uses src/jodell/python/JodellTool-0.1.5-py3-none-any.whl)
 ER3PRO_GRIPPER_USB_PORT = '/dev/ttyUSB0'
@@ -123,12 +139,12 @@ ER3PRO_FOLLOW_SCALE = 0.8   # FollowPosition speed scale in [0,1], larger -> mor
 ER3PRO_RT_FILTER_FREQ = 15.0 # Hz, larger -> less lag, smaller -> smoother
 ER3PRO_MAX_JOINT_SPEED = 0.35   # rad/s
 ER3PRO_MAX_JOINT_ACCEL = 1.00   # rad/s^2
-ER3PRO_CMD_TIMEOUT = 0.25     # s, equivalent to 2.5 * POLICY_CONTROL_PERIOD
+ER3PRO_CMD_TIMEOUT = 0.5     # s, equivalent to 2.5 * POLICY_CONTROL_PERIOD
 ER3PRO_TCP_OFFSET_Z = 0.10    # m, TCP defined at gripper center 10 cm along flange +Z
 ER3PRO_TELEOP_PRESET_JOINT_DEG = np.array([-5.0, 10.0, 0.0, 80.0, 0.0, 90.0, 0.0], dtype=np.float64)
 
 
-ER3PRO_JOINT_IMPEDANCE = np.array([500.0, 500.0, 500.0, 500.0, 50.0, 50.0, 50.0], dtype=np.float64)
+ER3PRO_JOINT_IMPEDANCE = np.array([300.0, 300.0, 300.0, 300.0, 100.0, 100.0, 100.0], dtype=np.float64)
 ER3PRO_SOFT_PROTECTION_ENABLE = True
 ER3PRO_SOFT_Z_DROP_LIMIT = 0.12
 ER3PRO_SOFT_MAX_DOWN_STEP = 0.003
@@ -146,9 +162,9 @@ WRIST_CAMERA_HEIGHT = 1080
 USE_KINOVA_WRIST_CAMERA = False
 
 # Policy
-POLICY_SERVER_HOST =  '10.201.38.101' # 'localhost' or IP address of remote policy server
+POLICY_SERVER_HOST =  '192.168.1.131' # 'localhost' or IP address of remote policy server
 POLICY_SERVER_PORT = 5555
-POLICY_CONTROL_FREQ = 6.67
+POLICY_CONTROL_FREQ = 10
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ
 POLICY_IMAGE_WIDTH = 320
 POLICY_IMAGE_HEIGHT = 240

@@ -6,9 +6,14 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+import inspect
 import cv2 as cv
 import numpy as np
+from constants import LEROBOT_FPS, LEROBOT_REPO_ID, LEROBOT_ROOT, LEROBOT_TASK
 from constants import POLICY_CONTROL_FREQ
+
+LEROBOT_STATE_DIM = 15
+LEROBOT_ACTION_DIM = 8
 
 def write_frames_to_mp4(frames, mp4_path):
     height, width, _ = frames[0].shape
@@ -106,6 +111,223 @@ class EpisodeWriter:
         if self.flush_thread is not None:
             self.flush_thread.join()
             self.flush_thread = None
+
+
+def import_lerobot_dataset():
+    try:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        return LeRobotDataset
+    except Exception:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        return LeRobotDataset
+
+
+def call_with_supported_kwargs(fn, **kwargs):
+    sig = inspect.signature(fn)
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if accepts_kwargs:
+        return fn(**kwargs)
+    return fn(**{k: v for k, v in kwargs.items() if k in sig.parameters})
+
+
+def is_complete_lerobot_root(root):
+    meta_dir = root / 'meta'
+    episode_files = list((meta_dir / 'episodes').glob('chunk-*/*.parquet'))
+    return (
+        (meta_dir / 'info.json').exists()
+        and (meta_dir / 'tasks.parquet').exists()
+        and ((meta_dir / 'episodes.parquet').exists() or bool(episode_files))
+    )
+
+
+def unique_lerobot_root(root):
+    stamp = datetime.now().strftime('%Y%m%dT%H%M%S')
+    candidate = root.with_name(f'{root.name}_{stamp}')
+    idx = 1
+    while candidate.exists():
+        candidate = root.with_name(f'{root.name}_{stamp}_{idx}')
+        idx += 1
+    return candidate
+
+
+def create_lerobot_dataset(repo_id, root, fps, base_shape, wrist_shape, video_codec='h264', resume_existing=True):
+    LeRobotDataset = import_lerobot_dataset()
+    base_h, base_w, base_c = base_shape
+    wrist_h, wrist_w, wrist_c = wrist_shape
+    features = {
+        'observation.images.base': {
+            'dtype': 'video',
+            'shape': (base_c, base_h, base_w),
+            'names': ['channels', 'height', 'width'],
+        },
+        'observation.images.wrist': {
+            'dtype': 'video',
+            'shape': (wrist_c, wrist_h, wrist_w),
+            'names': ['channels', 'height', 'width'],
+        },
+        'observation.state': {
+            'dtype': 'float32',
+            'shape': (LEROBOT_STATE_DIM,),
+            'names': [
+                'joint_0', 'joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6',
+                'tcp_x', 'tcp_y', 'tcp_z', 'tcp_qx', 'tcp_qy', 'tcp_qz', 'tcp_qw', 'gripper',
+            ],
+        },
+        'action': {
+            'dtype': 'float32',
+            'shape': (LEROBOT_ACTION_DIM,),
+            'names': ['joint_0', 'joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6', 'gripper'],
+        },
+    }
+    root = Path(root).expanduser()
+    if root.exists() and resume_existing and is_complete_lerobot_root(root):
+        print(f'Loading existing LeRobot dataset root: {root}', flush=True)
+        return call_with_supported_kwargs(LeRobotDataset, repo_id=repo_id, root=root)
+    if root.exists():
+        new_root = unique_lerobot_root(root)
+        print(f'Existing LeRobot root found, creating a new root instead: {new_root}', flush=True)
+        root = new_root
+    return call_with_supported_kwargs(
+        LeRobotDataset.create,
+        repo_id=repo_id,
+        fps=fps,
+        root=root,
+        robot_type='er3pro_uarm',
+        features=features,
+        use_videos=True,
+        image_writer_threads=4,
+        image_writer_processes=0,
+        vcodec=video_codec,
+    )
+
+
+def _as_vector(data, key, shape):
+    value = np.asarray(data[key], dtype=np.float64).reshape(shape)
+    if not np.all(np.isfinite(value)):
+        raise ValueError(f'{key} contains non-finite values: {value}')
+    return value
+
+
+def build_lerobot_frame(obs, action, task):
+    arm_joints = _as_vector(obs, 'arm_joints', (7,))
+    arm_pos = _as_vector(obs, 'arm_pos', (3,))
+    arm_quat = _as_vector(obs, 'arm_quat', (4,))
+    gripper_pos = _as_vector(obs, 'gripper_pos', (1,))
+
+    if 'arm_joints' in action:
+        action_joints = _as_vector(action, 'arm_joints', (7,))
+    else:
+        # Cartesian gamepad teleop has no IK target joints in the action dict.
+        # Keep the LeRobot/UArm 8D schema by using the latest observed joints.
+        action_joints = arm_joints
+    action_gripper = _as_vector(action, 'gripper_pos', (1,))
+
+    state = np.concatenate((arm_joints, arm_pos, arm_quat, gripper_pos)).astype(np.float32)
+    action_vec = np.concatenate((action_joints, action_gripper)).astype(np.float32)
+    if state.shape != (LEROBOT_STATE_DIM,):
+        raise ValueError(f'LeRobot state shape {state.shape} != {(LEROBOT_STATE_DIM,)}')
+    if action_vec.shape != (LEROBOT_ACTION_DIM,):
+        raise ValueError(f'LeRobot action shape {action_vec.shape} != {(LEROBOT_ACTION_DIM,)}')
+    return {
+        'observation.images.base': obs['base_image'],
+        'observation.images.wrist': obs['wrist_image'],
+        'observation.state': state,
+        'action': action_vec,
+        'task': task,
+    }
+
+
+def save_lerobot_episode(dataset, task):
+    try:
+        dataset.save_episode(task=task)
+    except TypeError:
+        dataset.save_episode()
+
+
+def flush_lerobot_saved_episode(dataset):
+    if hasattr(dataset, '_close_writer'):
+        dataset._close_writer()
+        if hasattr(dataset, '_writer_closed_for_reading'):
+            dataset._writer_closed_for_reading = True
+    meta = getattr(dataset, 'meta', None)
+    if meta is not None and hasattr(meta, '_close_writer'):
+        meta._close_writer()
+        latest = getattr(meta, 'latest_episode', None)
+        if latest is not None:
+            chunks_size = int(getattr(meta, 'chunks_size', 1000))
+            chunk_idx = int(latest['meta/episodes/chunk_index'][0])
+            file_idx = int(latest['meta/episodes/file_index'][0]) + 1
+            if file_idx >= chunks_size:
+                chunk_idx += 1
+                file_idx = 0
+            latest['meta/episodes/chunk_index'][0] = chunk_idx
+            latest['meta/episodes/file_index'][0] = file_idx
+
+
+class LeRobotEpisodeWriter:
+    def __init__(
+        self,
+        root=LEROBOT_ROOT,
+        repo_id=LEROBOT_REPO_ID,
+        task=LEROBOT_TASK,
+        fps=LEROBOT_FPS,
+        video_codec='h264',
+        resume_existing=True,
+    ):
+        self.root = root
+        self.repo_id = repo_id
+        self.task = task
+        self.fps = fps
+        self.video_codec = video_codec
+        self.resume_existing = resume_existing
+        self.dataset = None
+        self.episode_frames = 0
+        self.flush_thread = None
+
+    def step(self, obs, action):
+        if self.dataset is None:
+            self.dataset = create_lerobot_dataset(
+                self.repo_id,
+                self.root,
+                self.fps,
+                obs['base_image'].shape,
+                obs['wrist_image'].shape,
+                video_codec=self.video_codec,
+                resume_existing=self.resume_existing,
+            )
+        self.dataset.add_frame(build_lerobot_frame(obs, action, self.task))
+        self.episode_frames += 1
+
+    def __len__(self):
+        return self.episode_frames
+
+    def _flush(self):
+        assert self.dataset is not None
+        assert len(self) > 0
+        save_lerobot_episode(self.dataset, self.task)
+        flush_lerobot_saved_episode(self.dataset)
+        print(f'Saved LeRobot episode to {self.root} frames={self.episode_frames}')
+        self.episode_frames = 0
+
+    def flush_async(self):
+        print('Saving successful LeRobot episode to disk...')
+        self.flush_thread = threading.Thread(target=self._flush, daemon=True)
+        self.flush_thread.start()
+
+    def wait_for_flush(self):
+        if self.flush_thread is not None:
+            self.flush_thread.join()
+            self.flush_thread = None
+
+    def discard(self):
+        if self.dataset is not None and hasattr(self.dataset, 'clear_episode_buffer'):
+            self.dataset.clear_episode_buffer()
+        self.episode_frames = 0
+
+    def close(self):
+        self.wait_for_flush()
+        if self.dataset is not None and hasattr(self.dataset, 'finalize'):
+            self.dataset.finalize()
 
 class EpisodeReader:
     def __init__(self, episode_dir):

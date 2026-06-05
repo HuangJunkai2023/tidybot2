@@ -10,8 +10,9 @@ from constants import POLICY_CONTROL_PERIOD
 from constants import ENABLE_ARM
 from constants import ARM_BACKEND
 from constants import ER3PRO_ARM_POSE_OBS_SOURCE
-from episode_storage import EpisodeWriter
-from policies import TeleopPolicy, RemotePolicy, UarmTeleopPolicy
+from constants import LEROBOT_FPS, LEROBOT_REPO_ID, LEROBOT_ROOT, LEROBOT_TASK
+from episode_storage import EpisodeWriter, LeRobotEpisodeWriter
+from policies import TeleopPolicy, RemotePolicy, UarmTeleopPolicy, GamepadTeleopPolicy
 
 PROFILE_INTERVAL = 2.0
 ENABLE_MAIN_LOOP_PROFILE = False
@@ -81,6 +82,8 @@ def should_save_episode(writer):
             return True
         if user_input == 'n':
             print('Discarding episode')
+            if hasattr(writer, 'discard'):
+                writer.discard()
             return False
         print('Invalid response')
 
@@ -120,7 +123,7 @@ def _normalize_action_for_env(obs, action):
 
     return normalized_action
 
-def run_episode(env, policy, writer=None):
+def run_episode(env, policy, writer=None, action_debug=False):
     profile = {
         'last_time': time.time(),
         'step_count': 0,
@@ -166,6 +169,8 @@ def run_episode(env, policy, writer=None):
             value = float(step_timing.get(key, 0.0))
             profile[f'{key}_total_ms'] += value
             profile[f'{key}_max_ms'] = max(profile[f'{key}_max_ms'], value)
+
+    action_debug_state = {'last_time': 0.0}
 
     def maybe_print_profile():
         if not ENABLE_MAIN_LOOP_PROFILE:
@@ -213,6 +218,25 @@ def run_episode(env, policy, writer=None):
             'arm_action_total_ms': 0.0,
             'arm_action_max_ms': 0.0,
         })
+
+    def maybe_print_action_debug(obs, action, env_step_ms):
+        if not action_debug or not isinstance(action, dict):
+            return
+        now = time.monotonic()
+        if now - action_debug_state['last_time'] < 0.5:
+            return
+        action_debug_state['last_time'] = now
+
+        step_timing = getattr(env, 'last_step_timing_ms', {})
+        parts = [f'env_step_ms={env_step_ms:.1f}', f'arm_action_ms={float(step_timing.get("arm_action", 0.0)):.1f}']
+        if 'arm_pos' in action and 'arm_pos' in obs:
+            arm_pos = np.asarray(action['arm_pos'], dtype=np.float64)
+            obs_pos = np.asarray(obs['arm_pos'], dtype=np.float64)
+            parts.append(f'arm_pos={np.round(arm_pos, 4).tolist()}')
+            parts.append(f'arm_pos_delta={np.round(arm_pos - obs_pos, 4).tolist()}')
+        if 'gripper_pos' in action:
+            parts.append(f'gripper={float(np.asarray(action["gripper_pos"]).reshape(-1)[0]):.3f}')
+        print('[gamepad_action_debug] ' + ' '.join(parts), flush=True)
 
     # Reset the env
     print('Resetting env...')
@@ -270,6 +294,7 @@ def run_episode(env, policy, writer=None):
                 env_step_start = time.time()
                 env.step(action)
                 env_step_ms = 1000.0 * (time.time() - env_step_start)
+                maybe_print_action_debug(obs, action, env_step_ms)
 
                 if writer is not None and not episode_ended:
                     # Record executed action
@@ -307,6 +332,19 @@ def run_episode(env, policy, writer=None):
         # Wait for writer to finish saving to disk
         writer.wait_for_flush()
 
+def create_episode_writer(args):
+    if not args.save:
+        return None
+    if getattr(args, 'gamepad', False):
+        return LeRobotEpisodeWriter(
+            root=getattr(args, 'lerobot_root', LEROBOT_ROOT),
+            repo_id=getattr(args, 'lerobot_repo_id', LEROBOT_REPO_ID),
+            task=getattr(args, 'lerobot_task', LEROBOT_TASK),
+            fps=getattr(args, 'lerobot_fps', LEROBOT_FPS),
+        )
+    return EpisodeWriter(args.output_dir)
+
+
 def main(args):
     env = None
     policy = None
@@ -328,28 +366,52 @@ def main(args):
         if args.teleop:
             if args.uarm:
                 policy = UarmTeleopPolicy(env.arm)
+            elif args.gamepad:
+                policy = GamepadTeleopPolicy(use_ssl=args.ssl, debug=args.gamepad_debug)
             else:
                 policy = TeleopPolicy(use_ssl=args.ssl)
         else:
             policy = RemotePolicy(use_ssl=args.ssl)
 
+        persistent_writer = create_episode_writer(args) if args.save and args.gamepad else None
         while True:
-            writer = EpisodeWriter(args.output_dir) if args.save else None
-            run_episode(env, policy, writer)
+            writer = persistent_writer if persistent_writer is not None else create_episode_writer(args)
+            run_episode(env, policy, writer, action_debug=args.gamepad_debug)
     finally:
+        if 'persistent_writer' in locals():
+            _close_quietly(persistent_writer, 'writer')
         _close_quietly(policy, 'policy')
         _close_quietly(env, 'env')
         restore_shutdown_handlers()
 
-if __name__ == '__main__':
+def build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
     parser.add_argument('--ssl', action='store_true', help='Use HTTPS instead of HTTP (required for WebXR on some devices)')
     parser.add_argument('--uarm', action='store_true', help='Use Zhonglin U-Arm as the only teleop input source')
+    parser.add_argument('--gamepad', action='store_true', help='Use Logitech F710 gamepad as the only teleop input source')
+    parser.add_argument('--gamepad-debug', action='store_true', help='Print Logitech F710 raw axes/buttons and mapped motion deltas')
     parser.add_argument('--output-dir', default='data/demos')
-    args = parser.parse_args()
+    parser.add_argument('--lerobot-root', default=LEROBOT_ROOT, help='LeRobot dataset root for --teleop --gamepad --save')
+    parser.add_argument('--lerobot-repo-id', default=LEROBOT_REPO_ID, help='LeRobot repo id for --teleop --gamepad --save')
+    parser.add_argument('--lerobot-task', default=LEROBOT_TASK, help='LeRobot task name for --teleop --gamepad --save')
+    parser.add_argument('--lerobot-fps', type=int, default=LEROBOT_FPS, help='LeRobot FPS for --teleop --gamepad --save')
+    return parser
+
+
+def validate_args(parser, args):
     if args.uarm and not args.teleop:
         parser.error('--uarm requires --teleop')
+    if args.gamepad and not args.teleop:
+        parser.error('--gamepad requires --teleop')
+    if args.uarm and args.gamepad:
+        parser.error('--uarm and --gamepad are mutually exclusive')
+
+
+if __name__ == '__main__':
+    parser = build_arg_parser()
+    args = parser.parse_args()
+    validate_args(parser, args)
     main(args)

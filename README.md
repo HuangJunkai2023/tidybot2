@@ -146,6 +146,23 @@ To use our phone teleoperation system with the simulation, please see the [Phone
 
 To collect data using our phone teleoperation interface, please see the [Data collection](https://tidybot2.github.io/docs/usage/#data-collection) section of the Usage guide.
 
+For ER3Pro setups with a Logitech F710, the gamepad can be used as an arm-only teleoperation source in the same recording loop:
+
+```bash
+python main.py --teleop --gamepad --save --lerobot-root data/lerobot_gamepad_er3pro
+```
+
+Use the same phone web page as phone teleoperation to press `Start episode`, `End episode`, and `Reset env`. On the F710, the left stick moves the TCP horizontally, the right stick moves the TCP up/down and rolls the tool around its own Z axis, `LT` closes the gripper, and `RT` opens it. Release the sticks/triggers to stop motion.
+
+After the phone sends `Start episode`, the arm is first moved to the ER3Pro teleoperation preset pose. Recording begins only after that preset move finishes, and saved gamepad episodes use the same LeRobot feature schema as the U-Arm recorder: base/wrist videos, 15D robot state, and 8D joint-plus-gripper action.
+
+The existing phone and U-Arm modes are unchanged:
+
+```bash
+python main.py --teleop --save
+python main.py --teleop --uarm --save
+```
+
 After data has been collected, it can be helpful to validate the data by replaying episodes.
 We will show how to do this using our sample data, which can be downloaded as follows:
 

@@ -4,19 +4,24 @@ import types
 import unittest
 
 
-sys.modules['numpy'] = types.SimpleNamespace(asarray=lambda value, dtype=None: value, float64=float)
-sys.modules['constants'] = types.SimpleNamespace(
+sys.modules.setdefault('numpy', types.SimpleNamespace(asarray=lambda value, dtype=None: value, float64=float))
+sys.modules.setdefault('constants', types.SimpleNamespace(
     POLICY_CONTROL_PERIOD=0.1,
     ENABLE_ARM=False,
     ARM_BACKEND='er3pro',
     ER3PRO_ARM_POSE_OBS_SOURCE='state',
-)
-sys.modules['episode_storage'] = types.SimpleNamespace(EpisodeWriter=None)
-sys.modules['policies'] = types.SimpleNamespace(
+    LEROBOT_FPS=10,
+    LEROBOT_REPO_ID='local/test',
+    LEROBOT_ROOT='data/test_lerobot',
+    LEROBOT_TASK='test_task',
+))
+sys.modules.setdefault('episode_storage', types.SimpleNamespace(EpisodeWriter=None, LeRobotEpisodeWriter=object))
+sys.modules.setdefault('policies', types.SimpleNamespace(
     TeleopPolicy=object,
     RemotePolicy=object,
     UarmTeleopPolicy=object,
-)
+    GamepadTeleopPolicy=object,
+))
 
 import main
 

@@ -26,6 +26,12 @@ from constants import TELEOP_DPAD_TRANSLATION_SPEED
 from constants import TELEOP_TOOL_ROLL_SPEED
 from constants import TELEOP_ARM_POSE_REJECT_ENABLE
 from constants import TELEOP_ARM_MAX_FRAME_POS_DELTA, TELEOP_ARM_MAX_FRAME_ROT_DELTA
+from constants import GAMEPAD_DEADZONE
+from constants import GAMEPAD_TCP_XY_SPEED, GAMEPAD_TCP_Z_SPEED
+from constants import GAMEPAD_TOOL_ROLL_SPEED, GAMEPAD_GRIPPER_SPEED
+from constants import GAMEPAD_AXIS_LEFT_X, GAMEPAD_AXIS_LEFT_Y, GAMEPAD_AXIS_LT
+from constants import GAMEPAD_AXIS_RIGHT_X, GAMEPAD_AXIS_RIGHT_Y, GAMEPAD_AXIS_RT
+from constants import GAMEPAD_BUTTON_LB, GAMEPAD_BUTTON_BACK, GAMEPAD_BUTTON_START
 from constants import ER3PRO_TELEOP_PRESET_JOINT_DEG
 from constants import UARM_JOINT_LIMIT_DEG_MAX, UARM_JOINT_LIMIT_DEG_MIN
 from constants import UARM_JOINT_OFFSET_DEG, UARM_JOINT_SCALE, UARM_JOINT_SIGN
@@ -577,6 +583,219 @@ class TeleopPolicy(Policy):
 
     def _process_message(self, data):
         self.teleop_controller.process_message(data)
+
+
+def apply_gamepad_deadzone(value, deadzone_size=GAMEPAD_DEADZONE):
+    value = float(value)
+    if abs(value) <= deadzone_size:
+        return 0.0
+    return math.copysign((abs(value) - deadzone_size) / (1.0 - deadzone_size), value)
+
+
+class GamepadTeleopPolicy(Policy):
+    uses_web_start = True
+    handles_teleop_preset = False
+
+    def __init__(self, use_ssl=False, joystick=None, pygame_module=None, sleep_fn=time.sleep, start_web_server=True, debug=False):
+        if pygame_module is None:
+            import pygame as pygame_module
+        self.pygame = pygame_module
+        self.sleep_fn = sleep_fn
+        self.debug = debug
+        self.last_debug_time = 0.0
+        self.pygame.init()
+        if hasattr(self.pygame, 'joystick') and hasattr(self.pygame.joystick, 'init'):
+            self.pygame.joystick.init()
+        if joystick is None:
+            joystick = self.pygame.joystick.Joystick(0)
+        self.joystick = joystick
+        if hasattr(self.joystick, 'init'):
+            self.joystick.init()
+        self._print_gamepad_info()
+
+        self.targets_initialized = False
+        self.base_cmd_pose = None
+        self.arm_target_pos = None
+        self.arm_target_rot = None
+        self.gripper_target_pos = None
+        self.arm_cmd_pos = None
+        self.arm_cmd_rot = None
+        self.gripper_cmd_pos = None
+        self.teleop_state = None
+        self.episode_ended = False
+        self.message_buffer = TeleopMessageBuffer()
+        self.web_server = WebServer(self.message_buffer)
+        self.listener_running = True
+        if start_web_server:
+            threading.Thread(target=lambda: self.web_server.run(use_ssl=use_ssl), daemon=True).start()
+        threading.Thread(target=self.listener_loop, daemon=True).start()
+
+    def reset(self):
+        self.targets_initialized = False
+        self.base_cmd_pose = None
+        self.arm_target_pos = None
+        self.arm_target_rot = None
+        self.gripper_target_pos = None
+        self.arm_cmd_pos = None
+        self.arm_cmd_rot = None
+        self.gripper_cmd_pos = None
+        self.episode_ended = False
+
+        self.teleop_state = None
+        print('[gamepad] waiting for Start episode from phone...', flush=True)
+        while self.teleop_state != 'episode_started':
+            self._pump()
+            self._drain_state_updates()
+            self.sleep_fn(0.01)
+        print('[gamepad] episode_started received', flush=True)
+
+    def step(self, obs):
+        self._pump()
+        self._drain_state_updates()
+
+        if not self.episode_ended and self.teleop_state == 'episode_ended':
+            self.episode_ended = True
+            return 'end_episode'
+
+        if self.teleop_state == 'reset_env':
+            return 'reset_env'
+
+        if self.episode_ended:
+            return None
+
+        if not self.targets_initialized:
+            self._align_targets_to_obs(obs)
+
+        dt = float(POLICY_CONTROL_PERIOD)
+        left_x = apply_gamepad_deadzone(self._axis(GAMEPAD_AXIS_LEFT_X))
+        left_y = apply_gamepad_deadzone(self._axis(GAMEPAD_AXIS_LEFT_Y))
+        right_x = apply_gamepad_deadzone(self._axis(GAMEPAD_AXIS_RIGHT_X))
+        right_y = apply_gamepad_deadzone(self._axis(GAMEPAD_AXIS_RIGHT_Y))
+        close_input = self._trigger(GAMEPAD_AXIS_LT)
+        open_input = self._trigger(GAMEPAD_AXIS_RT)
+
+        dpos = np.array([
+            -left_y * GAMEPAD_TCP_XY_SPEED * dt,
+            -left_x * GAMEPAD_TCP_XY_SPEED * dt,
+            -right_y * GAMEPAD_TCP_Z_SPEED * dt,
+        ], dtype=np.float64)
+        self.arm_target_pos = self.arm_target_pos + dpos
+
+        roll_step = 0.0
+        if abs(right_x) > 1e-6:
+            roll_step = GAMEPAD_TOOL_ROLL_SPEED * dt * right_x
+            self.arm_target_rot = self.arm_target_rot * R.from_rotvec(np.array([0.0, 0.0, roll_step], dtype=np.float64))
+
+        gripper_step = GAMEPAD_GRIPPER_SPEED * dt * (open_input - close_input)
+        self.gripper_target_pos[0] = np.clip(self.gripper_target_pos[0] + gripper_step, 0.0, 1.0)
+        self._update_command_state()
+        self._maybe_print_debug(left_x, left_y, right_x, right_y, close_input, open_input, dpos, roll_step, gripper_step)
+
+        arm_quat = self.arm_cmd_rot.as_quat(canonical=False)
+        if arm_quat[3] < 0.0:
+            np.negative(arm_quat, out=arm_quat)
+        return {
+            'base_pose': self.base_cmd_pose.copy(),
+            'arm_pos': self.arm_cmd_pos.copy(),
+            'arm_quat': arm_quat,
+            'gripper_pos': self.gripper_cmd_pos.copy(),
+        }
+
+    def _align_targets_to_obs(self, obs):
+        self.base_cmd_pose = np.asarray(obs['base_pose'], dtype=np.float64).copy()
+        self.arm_target_pos = np.asarray(obs['arm_pos'], dtype=np.float64).copy()
+        self.arm_target_rot = R.from_quat(np.asarray(obs['arm_quat'], dtype=np.float64))
+        self.gripper_target_pos = np.asarray(obs['gripper_pos'], dtype=np.float64).copy()
+        self.arm_cmd_pos = self.arm_target_pos.copy()
+        self.arm_cmd_rot = self.arm_target_rot
+        self.gripper_cmd_pos = self.gripper_target_pos.copy()
+        self.targets_initialized = True
+
+    def _update_command_state(self):
+        if TELEOP_JUMP_GUARD_ENABLE:
+            dt = float(POLICY_CONTROL_PERIOD)
+            self.arm_cmd_pos = _clip_vector_step(
+                self.arm_target_pos,
+                self.arm_cmd_pos,
+                TELEOP_MAX_ARM_LINEAR_SPEED * dt,
+            )
+            self.arm_cmd_rot = _clip_rotation_step(
+                self.arm_target_rot,
+                self.arm_cmd_rot,
+                TELEOP_MAX_ARM_ANGULAR_SPEED * dt,
+            )
+            self.gripper_cmd_pos[0] = _clip_scalar_step(
+                self.gripper_target_pos[0],
+                self.gripper_cmd_pos[0],
+                TELEOP_MAX_GRIPPER_SPEED * dt,
+            )
+        else:
+            self.arm_cmd_pos = self.arm_target_pos.copy()
+            self.arm_cmd_rot = self.arm_target_rot
+            self.gripper_cmd_pos = self.gripper_target_pos.copy()
+
+    def _pump(self):
+        self.pygame.event.pump()
+
+    def _axis(self, axis):
+        try:
+            return float(self.joystick.get_axis(axis))
+        except Exception as e:
+            if self.debug:
+                print(f'[gamepad] failed to read axis {axis}: {type(e).__name__}: {e}', flush=True)
+            return 0.0
+
+    def _trigger(self, axis):
+        return float(np.clip(self._axis(axis), 0.0, 1.0))
+
+    def _button(self, button):
+        return bool(self.joystick.get_button(button))
+
+    def _safe_num_axes(self):
+        return int(self.joystick.get_numaxes()) if hasattr(self.joystick, 'get_numaxes') else 0
+
+    def _safe_num_buttons(self):
+        return int(self.joystick.get_numbuttons()) if hasattr(self.joystick, 'get_numbuttons') else 0
+
+    def _print_gamepad_info(self):
+        name = self.joystick.get_name() if hasattr(self.joystick, 'get_name') else 'unknown'
+        axes = self._safe_num_axes()
+        buttons = self._safe_num_buttons()
+        print(f'[gamepad] connected name="{name}" axes={axes} buttons={buttons}', flush=True)
+
+    def _maybe_print_debug(self, left_x, left_y, right_x, right_y, close_input, open_input, dpos, roll_step, gripper_step):
+        if not self.debug:
+            return
+        now = time.monotonic()
+        if now - self.last_debug_time < 0.5:
+            return
+        self.last_debug_time = now
+        raw_axes = [round(self._axis(i), 3) for i in range(self._safe_num_axes())]
+        buttons = [int(self._button(i)) for i in range(self._safe_num_buttons())]
+        print(
+            '[gamepad_debug] '
+            f'raw_axes={raw_axes} buttons={buttons} '
+            f'mapped=({left_x:.3f},{left_y:.3f},{right_x:.3f},{right_y:.3f},lt={close_input:.3f},rt={open_input:.3f}) '
+            f'dpos={np.round(dpos, 4).tolist()} roll={roll_step:.4f} grip_step={gripper_step:.4f}',
+            flush=True,
+        )
+
+    def _drain_state_updates(self):
+        while True:
+            item = self.message_buffer.get_state_update()
+            if item is None:
+                return
+            self.teleop_state = item['state_update']
+
+    def listener_loop(self):
+        while self.listener_running:
+            self._drain_state_updates()
+            time.sleep(0.001)
+
+    def close(self):
+        self.listener_running = False
+        if hasattr(self.pygame, 'quit'):
+            self.pygame.quit()
 
 
 class UarmTeleopPolicy(Policy):
