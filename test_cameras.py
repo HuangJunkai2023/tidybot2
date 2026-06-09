@@ -46,7 +46,7 @@ class FakeBaseManager:
 
 sys.modules.setdefault('base_server', types.SimpleNamespace(BaseManager=FakeBaseManager))
 
-from cameras import Camera
+from cameras import Camera, UVCCamera
 from real_env import RealEnv
 
 
@@ -73,6 +73,12 @@ class FakeCapture:
 
 
 class TestCameraLifecycle(unittest.TestCase):
+    def test_missing_by_id_path_does_not_guess_video_index(self):
+        camera = UVCCamera.__new__(UVCCamera)
+        hint = '/dev/v4l/by-id/usb-Missing_Camera-video-index0'
+
+        self.assertEqual(camera._resolve_device(hint), hint)
+
     def test_close_stops_worker_before_releasing_capture(self):
         camera = FakeCamera()
 

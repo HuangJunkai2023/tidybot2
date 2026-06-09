@@ -151,7 +151,7 @@ ER3PRO_SOFT_MAX_DOWN_STEP = 0.003
 ER3PRO_ARM_CMD_LOG_INTERVAL = 0.0  # s, 0 disables high-rate command logging
 
 # Cameras
-BASE_CAMERA_DEVICE = '/dev/v4l/by-id/usb-Intel_R__RealSense_TM__Depth_Camera_435if_Intel_R__RealSense_TM__Depth_Camera_435if-video-index0'
+BASE_CAMERA_DEVICE = '/dev/v4l/by-id/usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i-video-index0'
 BASE_CAMERA_WIDTH = 1280
 BASE_CAMERA_HEIGHT = 720
 # Backward-compatible alias: base camera is configured by device hint/path.

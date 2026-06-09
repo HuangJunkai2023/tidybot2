@@ -75,13 +75,6 @@ class UVCCamera(Camera):
                 except Exception:
                     return hint
 
-            # Fallback for missing /dev/v4l/by-id entries: extract video index from name
-            # e.g. ...-video-index0 -> /dev/video0
-            m = re.search(r'video-index(\d+)$', hint)
-            if m is not None:
-                fallback = Path(f'/dev/video{m.group(1)}')
-                if fallback.exists():
-                    return str(fallback)
             return hint
         if hint.isdigit():
             return int(hint)
