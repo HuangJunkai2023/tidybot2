@@ -4,3 +4,4 @@ __pycache__
 *.un~
 *.swp
 .vscode/
+models/isaaclab/**/.asset_hash
