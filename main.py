@@ -19,6 +19,8 @@ ENABLE_MAIN_LOOP_PROFILE = False
 
 
 def _close_quietly(resource, name):
+    # 【退出管理】输入资源对象和用于日志的名称，尝试调用 close() 释放资源。
+    # 无返回值；资源为空或没有 close() 时跳过，关闭异常只打印，避免打断后续清理。
     if resource is None or not hasattr(resource, 'close'):
         return
     try:
@@ -28,15 +30,23 @@ def _close_quietly(resource, name):
 
 
 def install_shutdown_handlers(get_resources):
+    # 【启动/退出管理】输入一个可调用对象，调用它可取得当前的 (env, policy)。
+    # 保存并替换进程的信号处理方式，使中断/退出时先清理资源；返回恢复旧处理方式的函数。
+    # 内部回调在这里被定义、注册，收到对应信号时才执行；此处不会立即关闭环境。
     shutting_down = {'active': False}
     previous_handlers = {}
 
     def cleanup():
+        # 【退出管理】无显式参数，通过外层 get_resources() 获取最新的环境和策略。
+        # 依次关闭策略和环境，无返回值；延迟获取可处理它们尚未创建或已经创建的情况。
         env, policy = get_resources()
         _close_quietly(policy, 'policy')
         _close_quietly(env, 'env')
 
     def handle_shutdown(signum, frame):
+        # 【退出管理】信号回调：signum 是信号编号，frame 是被中断位置的栈帧（此处未使用）。
+        # 将外层 active 标志置为 True，避免本回调重复清理；随后抛出异常结束正常执行。
+        # Ctrl+C 对应 KeyboardInterrupt，其余注册信号对应 SystemExit，没有正常返回值。
         if not shutting_down['active']:
             shutting_down['active'] = True
             signal_name = signal.Signals(signum).name
@@ -53,6 +63,8 @@ def install_shutdown_handlers(get_resources):
         signal.signal(signum, handle_shutdown)
 
     def restore():
+        # 【退出管理】无显式输入，使用外层保存的 previous_handlers 恢复原来的信号处理方式。
+        # 无返回值；由 main() 的 finally 调用，撤销本次安装对进程信号配置的修改。
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
 
@@ -60,6 +72,8 @@ def install_shutdown_handlers(get_resources):
 
 
 def move_arm_to_teleop_preset(env):
+    # 【action / 运行前准备】输入环境，仅在启用 ER3Pro 且环境有机械臂时请求移动到预设姿态。
+    # 无返回值；可能改变实际机械臂状态，为示教/执行提供起始姿态，其余情况直接跳过。
     if not ENABLE_ARM or ARM_BACKEND != 'er3pro':
         return
 
@@ -71,6 +85,9 @@ def move_arm_to_teleop_preset(env):
     print('Arm reached teleop preset pose')
 
 def should_save_episode(writer):
+    # 【recording】输入记录器，返回是否保存本轮数据的布尔值；空记录直接返回 False。
+    # 非空时等待终端输入；选择不保存时可能调用 writer.discard() 丢弃缓存。
+    # 本函数只决定是否保存，实际写盘由调用者发起。
     if len(writer) == 0:
         print('Discarding empty episode')
         return False
@@ -88,6 +105,9 @@ def should_save_episode(writer):
         print('Invalid response')
 
 def _build_logged_observation(obs, action):
+    # 【recording】输入本步观测和动作，返回用于记录的观测；不重新读取环境。
+    # 动作为字典时浅复制 obs；按配置可用动作中的机械臂/夹爪目标替换记录字段，保存示教意图。
+    # 不修改原 obs 字典；未替换的值仍共享引用。非字典动作则直接返回原 obs。
     if not isinstance(action, dict):
         return obs
 
@@ -105,6 +125,9 @@ def _build_logged_observation(obs, action):
     return logged_obs
 
 def _normalize_action_for_env(obs, action):
+    # 【action / 接口适配】输入观测和策略输出，返回环境可识别的动作字段格式。
+    # 浅复制动作字典、统一关节字段名；缺少底盘目标时，用当前观测中的底盘位姿补齐。
+    # 不直接执行动作，也不修改原字典；非字典输出原样返回。这不是数值归一化。
     if not isinstance(action, dict):
         return action
 
@@ -124,6 +147,10 @@ def _normalize_action_for_env(obs, action):
     return normalized_action
 
 def run_episode(env, policy, writer=None, action_debug=False):
+    # 【控制循环：observation -> policy -> action，并按需 recording】
+    # 输入环境、动作来源、可选记录器和调试开关；重置后反复获取观测、产生动作、下发并记录。
+    # 会改变环境/策略/记录器及本轮统计状态；正常结束无返回值，中断时处理保存后继续抛出异常。
+    # end_episode 只结束本轮记录，循环仍可执行动作；收到 reset_env 才跳出循环，交回 main()。
     profile = {
         'last_time': time.time(),
         'step_count': 0,
@@ -150,6 +177,8 @@ def run_episode(env, policy, writer=None, action_debug=False):
     }
 
     def update_profile(get_obs_ms, policy_ms, env_step_ms, loop_ms):
+        # 【运行诊断】输入本步各阶段耗时（毫秒），并读取外层 env 暴露的细分耗时。
+        # 累加外层 profile 的次数、总耗时与最大值，无返回值；用于观察控制循环的时间开销。
         obs_timing = getattr(env, 'last_obs_timing_ms', {})
         step_timing = getattr(env, 'last_step_timing_ms', {})
         profile['step_count'] += 1
@@ -173,6 +202,8 @@ def run_episode(env, policy, writer=None, action_debug=False):
     action_debug_state = {'last_time': 0.0}
 
     def maybe_print_profile():
+        # 【运行诊断】无显式参数，检查统计开关和打印间隔，按需输出循环频率与耗时。
+        # 打印后清零外层 profile 的窗口统计并更新时间；无返回值，不负责控制循环频率。
         if not ENABLE_MAIN_LOOP_PROFILE:
             return
         now = time.time()
@@ -220,6 +251,8 @@ def run_episode(env, policy, writer=None, action_debug=False):
         })
 
     def maybe_print_action_debug(obs, action, env_step_ms):
+        # 【action / 运行诊断】输入观测、动作和下发耗时，按需打印目标、目标与观测之差及夹爪命令。
+        # 更新外层最近打印时间，最多每 0.5 秒打印一次；无返回值，不修改观测或动作。
         if not action_debug or not isinstance(action, dict):
             return
         now = time.monotonic()
@@ -238,7 +271,7 @@ def run_episode(env, policy, writer=None, action_debug=False):
             parts.append(f'gripper={float(np.asarray(action["gripper_pos"]).reshape(-1)[0]):.3f}')
         print('[gamepad_action_debug] ' + ' '.join(parts), flush=True)
 
-    # Reset the env
+    # 运行前准备：请求环境重置，再重置策略/输入源；具体实现由传入对象提供。
     print('Resetting env...')
     env.reset()
     print('Env has been reset')
@@ -256,28 +289,35 @@ def run_episode(env, policy, writer=None, action_debug=False):
     print('Starting new episode')
 
     episode_ended = False
+    # start_time 是本轮循环的固定时间基准，不在每步完成后重新赋值。
     start_time = time.time()
     profile['last_time'] = start_time
     try:
         for step_idx in count():
+            # step_idx 从 0 开始递增；即使本步没有动作，下一轮编号仍会加一。
             loop_start_time = time.time()
 
-            # Enforce desired control freq
+            # POLICY_CONTROL_PERIOD 是目标周期（秒），目标频率为 1 / 周期。
+            # step_end_time 虽然名字含 end，实际用于等待本步开始读取观测的计划时刻。
+            # 各步对齐到 start_time + 0*T、1*T、2*T……，避免每步额外睡满 T 导致累计延迟。
             step_end_time = start_time + step_idx * POLICY_CONTROL_PERIOD
+            # 提前到达就短暂休眠；已经超时就不等待，也不跳过步号，随后可能连续追赶。
+            # 执行耗时、系统调度和 time.time() 的时钟变化都会影响频率，不保证严格实时。
             while time.time() < step_end_time:
                 time.sleep(0.0001)
 
-            # Get latest observation
+            # observation：从环境取得本步观测，赋给 obs；这里还没有产生本步动作。
             get_obs_start = time.time()
             obs = env.get_obs()
             get_obs_ms = 1000.0 * (time.time() - get_obs_start)
 
-            # Get action
+            # policy：把 obs 交给动作来源（人工遥操作或远程策略），得到 action。
+            # 输出也可能是 None 或控制流程用的字符串，所以下面需要分类处理。
             policy_start = time.time()
             action = policy.step(obs)
             policy_ms = 1000.0 * (time.time() - policy_start)
 
-            # No action if teleop not enabled
+            # 没有动作（例如尚未使能）时，跳过执行与记录，下一轮仍按计划获取观测。
             if action is None:
                 update_profile(
                     get_obs_ms,
@@ -288,7 +328,8 @@ def run_episode(env, policy, writer=None, action_debug=False):
                 maybe_print_profile()
                 continue
 
-            # Execute valid action on robot
+            # action：字典输出先做字段适配，再由 env.step(action) 下发到环境。
+            # 此处不接收新观测；环境变化后的观测在下一轮 env.get_obs() 获取。
             if isinstance(action, dict):
                 action = _normalize_action_for_env(obs, action)
                 env_step_start = time.time()
@@ -297,10 +338,10 @@ def run_episode(env, policy, writer=None, action_debug=False):
                 maybe_print_action_debug(obs, action, env_step_ms)
 
                 if writer is not None and not episode_ended:
-                    # Record executed action
+                    # recording：动作下发后记录本步观测和动作；obs 来自下发前，不是执行后的新观测。
                     writer.step(_build_logged_observation(obs, action), action)
 
-            # Episode ended
+            # 标记记录结束并询问是否保存；这里没有 break，仍允许后续动作执行。
             elif not episode_ended and action == 'end_episode':
                 episode_ended = True
                 print('Episode ended')
@@ -311,7 +352,7 @@ def run_episode(env, policy, writer=None, action_debug=False):
 
                 print('Teleop is now active. Press "Reset env" in the web app when ready to proceed.')
 
-            # Ready for env reset
+            # 收到重置信号才离开本函数的循环，由 main() 再次调用 run_episode()。
             elif action == 'reset_env':
                 break
 
@@ -333,6 +374,9 @@ def run_episode(env, policy, writer=None, action_debug=False):
         writer.wait_for_flush()
 
 def create_episode_writer(args):
+    # 【recording / 创建记录器】输入解析后的启动参数；不保存时返回 None。
+    # 保存且使用手柄时创建 LeRobotEpisodeWriter，否则创建 EpisodeWriter；具体初始化由类负责。
+    # 返回的对象供主循环逐步记录；此函数不采集观测，也不生成动作。
     if not args.save:
         return None
     if getattr(args, 'gamepad', False):
@@ -346,8 +390,12 @@ def create_episode_writer(args):
 
 
 def main(args):
+    # 【整体调度】输入启动参数，选择实机/仿真环境、人工/远程策略和记录器，反复运行 episode。
+    # 管理这些对象的生命周期，退出时清理并恢复信号处理；不向调用者返回运行结果。
+    # 它连接所需的外部服务，不负责启动全部硬件服务、Docker 或 GPU 推理服务。
     env = None
     policy = None
+    # lambda 在被调用时读取当前 env、policy，避免只保存初始化时的两个 None。
     restore_shutdown_handlers = install_shutdown_handlers(lambda: (env, policy))
 
     try:
@@ -362,7 +410,7 @@ def main(args):
             from real_env import RealEnv
             env = RealEnv()
 
-        # Create policy
+        # policy 表示动作来源：可以是人工输入，也可以是远程策略客户端，不一定是本地模型。
         if args.teleop:
             if args.uarm:
                 policy = UarmTeleopPolicy(env.arm)
@@ -373,6 +421,7 @@ def main(args):
         else:
             policy = RemotePolicy(use_ssl=args.ssl)
 
+        # 手柄保存模式跨 episode 复用记录器；其他模式每次进入 episode 前创建或返回 None。
         persistent_writer = create_episode_writer(args) if args.save and args.gamepad else None
         while True:
             writer = persistent_writer if persistent_writer is not None else create_episode_writer(args)
@@ -385,6 +434,9 @@ def main(args):
         restore_shutdown_handlers()
 
 def build_arg_parser():
+    # 【启动准备】无显式输入，创建并返回定义好命令行选项的 ArgumentParser。
+    # add_argument() 修改的是新建解析器的规则；此处尚未读取本次命令行，也没有启动机器人。
+    # 集中定义开关和默认值，让同一入口能选择不同运行方式。
     parser = argparse.ArgumentParser()
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
@@ -402,6 +454,8 @@ def build_arg_parser():
 
 
 def validate_args(parser, args):
+    # 【启动准备】输入解析器和已解析的参数，检查遥操作选项的依赖与互斥关系。
+    # 合法时不修改参数、默认返回 None；非法时 parser.error() 报错退出，避免进入错误运行组合。
     if args.uarm and not args.teleop:
         parser.error('--uarm requires --teleop')
     if args.gamepad and not args.teleop:
@@ -411,6 +465,8 @@ def validate_args(parser, args):
 
 
 if __name__ == '__main__':
+    # 直接运行此脚本时的入口：定义参数规则 -> 读取命令行 -> 检查组合 -> 进入主调度。
+    # 导入此模块时不会执行这个入口块。
     parser = build_arg_parser()
     args = parser.parse_args()
     validate_args(parser, args)
